@@ -110,24 +110,25 @@ var intFields = map[reflect.Kind]struct{}{
 	reflect.Uint64: {},
 }
 
-func NewStructDecoder(desc KProbeDesc, allocFn AllocateFn, mappings map[string]string) (Decoder, error) {
+func NewStructDecoder(desc KProbeDesc, allocFn AllocateFn) (Decoder, error) {
 	dec := new(StructDecoder)
 	dec.alloc = allocFn
-	dec.fields = make([]fieldDecoder, 0, len(mappings))
 
 	sample, _ := allocFn()
 	tSample := reflect.ValueOf(sample).Elem().Type()
 	if tSample.Kind() != reflect.Struct {
 		return nil, errors.New("allocator function doesn't return a struct")
 	}
-	for name, destName := range mappings {
+	for i := 0; i < tSample.NumField(); i++ {
+		outField := tSample.Field(i)
+		name, found := outField.Tag.Lookup("kprobe")
+		if !found {
+			// Untagged field
+			continue
+		}
 		inField, found := desc.Fields[name]
 		if !found {
 			return nil, fmt.Errorf("field '%s' not found in kprobe format description", name)
-		}
-		outField, found := tSample.FieldByName(destName)
-		if !found {
-			return nil, fmt.Errorf("struct field '%s' not found in structure", destName)
 		}
 
 		switch inField.Type {

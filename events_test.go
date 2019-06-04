@@ -59,21 +59,22 @@ func BenchmarkMapDecoder(b *testing.B) {
 	}
 	b.StopTimer()
 	b.Log("result sum=", sum)
+	b.ReportAllocs()
 }
 
 func BenchmarkStructDecoder(b *testing.B) {
 	type myStruct struct {
-		Type   uint16
-		Flags  uint8
-		PCount uint8
-		PID    uint32
-		IP     uint64
-		Exe    string
-		Fd     uint64
-		Arg3   uint64
-		Arg4   uint32
-		Arg5   uint16
-		Arg6   uint8
+		Type   uint16 `kprobe:"common_type"`
+		Flags  uint8  `kprobe:"common_flags"`
+		PCount uint8  `kprobe:"common_preempt_count"`
+		PID    uint32 `kprobe:"common_pid"`
+		IP     uint64 `kprobe:"__probe_ip"`
+		Exe    string `kprobe:"exe"`
+		Fd     uint64 `kprobe:"fd"`
+		Arg3   uint64 `kprobe:"arg3"`
+		Arg4   uint32 `kprobe:"arg4"`
+		Arg5   uint16 `kprobe:"arg5"`
+		Arg6   uint8  `kprobe:"arg6"`
 	}
 	var myAlloc AllocateFn = func() (i interface{}, pointer unsafe.Pointer) {
 		s := new(myStruct)
@@ -96,19 +97,7 @@ func BenchmarkStructDecoder(b *testing.B) {
 		b.Fatal(err)
 	}
 	//b.Logf("Got desc=%+v", desc)
-	decoder, err := NewStructDecoder(desc, myAlloc, map[string]string{
-		"fd":                   "Fd",
-		"exe":                  "Exe",
-		"arg3":                 "Arg3",
-		"arg4":                 "Arg4",
-		"arg5":                 "Arg5",
-		"arg6":                 "Arg6",
-		"common_pid":           "PID",
-		"common_type":          "Type",
-		"common_flags":         "Flags",
-		"common_preempt_count": "PCount",
-		"__probe_ip":           "IP",
-	})
+	decoder, err := NewStructDecoder(desc, myAlloc)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -132,6 +121,7 @@ func BenchmarkStructDecoder(b *testing.B) {
 	}
 	b.StopTimer()
 	b.Log("result sum=", sum)
+	b.ReportAllocs()
 }
 
 func TestKProbeReal(t *testing.T) {
