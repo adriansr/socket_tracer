@@ -1,0 +1,19 @@
+{
+	"comment": "",
+	"ignore": "test",
+	"package": [
+		{
+			"checksumSHA1": "fyxTkn6ptjdSb9d1a/Z1Uw68VlU=",
+			"path": "acln.ro/perf",
+			"revision": "09a56b85c2ce7ab53fa5f91e69c1297aef7011a2",
+			"revisionTime": "2019-03-19T05:05:49Z"
+		},
+		{
+			"checksumSHA1": "ACZk9yzaxKrTUUEy4IS9Lb0+dqc=",
+			"path": "golang.org/x/sys/unix",
+			"revision": "adf421d2caf4ffcf74142ff5fb9ee323b21a819e",
+			"revisionTime": "2019-05-25T16:31:25Z"
+		}
+	],
+	"rootPath": "github.com/adriansr/socket_tracer"
+}
