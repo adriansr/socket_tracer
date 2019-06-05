@@ -6,16 +6,16 @@ package socket_tracer
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
-
-	"acln.ro/perf"
 )
 
 const (
+	// DefaultDebugFSPath is the usual path where `debugfs` is mounted.
 	DefaultDebugFSPath = "/sys/kernel/debug"
 )
 
@@ -24,7 +24,8 @@ var (
 	formatRegexp *regexp.Regexp
 )
 
-type KProbeEvents struct {
+// EventTracing is an accessor to manage event tracing via debugfs.
+type EventTracing struct {
 	basePath   string
 	eventsPath string
 }
@@ -35,25 +36,25 @@ func init() {
 	if err != nil {
 		panic(err)
 	}
-	// 	field:unsigned short common_type;	offset:0;	size:2;	signed:0;
+
 	formatRegexp, err = regexp.Compile("\\s+([^:]+):([^;]*);")
 	if err != nil {
 		panic(err)
 	}
 }
 
-func NewKProbeEvents(debugFSPath string) *KProbeEvents {
-	return &KProbeEvents{
+// NewEventTracing creates a new accessor for the event tracing feature using
+// the given path to a mounted `debugfs`.
+// Pass `DefaultDebugFSPath` to use the default path.
+func NewEventTracing(debugFSPath string) *EventTracing {
+	return &EventTracing{
 		basePath:   debugFSPath,
 		eventsPath: filepath.Join(debugFSPath, "tracing/kprobe_events"),
 	}
 }
 
-func (dfs *KProbeEvents) Supported() bool {
-	return perf.Supported() && fileMode(dfs.eventsPath, 0600)
-}
-
-func (dfs *KProbeEvents) List() (kprobes []KProbe, err error) {
+// ListKProbes lists the currently installed kprobes / kretprobes
+func (dfs *EventTracing) ListKProbes() (kprobes []KProbe, err error) {
 	file, err := os.Open(dfs.eventsPath)
 	if err != nil {
 		return nil, err
@@ -79,7 +80,26 @@ func (dfs *KProbeEvents) List() (kprobes []KProbe, err error) {
 	return kprobes, nil
 }
 
-func (dfs *KProbeEvents) appendKProbe(desc string) error {
+// AddKProbe installs a new kprobe/kretprobe.
+func (dfs *EventTracing) AddKProbe(probe KProbe) error {
+	return dfs.appendKProbe(probe.String())
+}
+
+// RemoveKProbe removes an installed kprobe/kretprobe.
+func (dfs *EventTracing) RemoveKProbe(probe KProbe) error {
+	return dfs.appendKProbe(probe.RemoveString())
+}
+
+// RemoveAllKProbes removes all installed kprobes and kretprobes.
+func (dfs *EventTracing) RemoveAllKProbes() error {
+	file, err := os.OpenFile(dfs.eventsPath, os.O_WRONLY|os.O_TRUNC|os.O_SYNC, 0)
+	if err != nil {
+		return err
+	}
+	return file.Close()
+}
+
+func (dfs *EventTracing) appendKProbe(desc string) error {
 	file, err := os.OpenFile(dfs.eventsPath, os.O_WRONLY|os.O_APPEND|os.O_SYNC, 0)
 	if err != nil {
 		return err
@@ -89,37 +109,47 @@ func (dfs *KProbeEvents) appendKProbe(desc string) error {
 	return err
 }
 
-func (dfs *KProbeEvents) AddKProbe(probe KProbe) error {
-	return dfs.appendKProbe(probe.String())
-}
-
-func (dfs *KProbeEvents) RemoveKProbe(probe KProbe) error {
-	return dfs.appendKProbe(probe.UninstallString())
-}
-
+// FieldType describes the type of a field in a event tracing probe.
 type FieldType uint8
 
 const (
+	// FieldTypeInteger describes a fixed-size integer field.
 	FieldTypeInteger = iota
+
+	// FieldTypeString describes a string field.
 	FieldTypeString
 )
 
+// Field describes a field returned by a event tracing probe.
 type Field struct {
-	Name   string
+	// Name is the name given to the field.
+	Name string
+
+	// Offset of the field inside the raw event.
 	Offset int
-	Size   int
+
+	// Size in bytes of the serialised field: 1, 2, 4, 8 for fixed size integers
+	// or 4 for strings.
+	Size int
+
+	// Signed tells whether an integer is signed (true) or unsigned (false).
 	Signed bool
-	Type   FieldType
+
+	// Type of field.
+	Type FieldType
 }
 
-type Fields map[string]Field
+// KProbeFormat describes a KProbe and the serialisation format used to encode
+// its arguments into a tracing event.
+type KProbeFormat struct {
+	// ID is the numeric ID given to this kprobe/kretprobe by the kernel.
+	ID int
 
-type KProbeDesc struct {
-	ID     int
-	Fields Fields
+	// Fields is a description of the fields (fetchargs) set by this kprobe.
+	Fields map[string]Field
 }
 
-var integerTypes = map[string]int{
+var integerTypes = map[string]uint8{
 	"char":  1,
 	"short": 2,
 	"int":   4,
@@ -134,12 +164,11 @@ var integerTypes = map[string]int{
 	"u64":   8,
 }
 
-func (dfs *KProbeEvents) LoadKProbeDescription(probe KProbe) (desc KProbeDesc, err error) {
-	group := "kprobe"
-	if len(probe.Group) != 0 {
-		group = probe.Group
-	}
-	path := filepath.Join(dfs.basePath, "tracing/events", group, probe.Name, "format")
+// LoadKProbeFormat returns the format used for serialisation of the given
+// kprobe/kretprobe into a tracing event. The probe needs to be installed
+// for the kernel to provide its format.
+func (dfs *EventTracing) LoadKProbeFormat(probe KProbe) (desc KProbeFormat, err error) {
+	path := filepath.Join(dfs.basePath, "tracing/events", probe.EffectiveGroup(), probe.Name, "format")
 	file, err := os.Open(path)
 	if err != nil {
 		return desc, err
@@ -148,8 +177,9 @@ func (dfs *KProbeEvents) LoadKProbeDescription(probe KProbe) (desc KProbeDesc, e
 	scanner := bufio.NewScanner(file)
 	parseFormat := false
 	for scanner.Scan() {
+		line := scanner.Text()
 		if !parseFormat {
-			parts := strings.SplitN(scanner.Text(), ": ", 2)
+			parts := strings.SplitN(line, ": ", 2)
 			switch {
 			case len(parts) == 2 && parts[0] == "ID":
 				if desc.ID, err = strconv.Atoi(parts[1]); err != nil {
@@ -159,15 +189,20 @@ func (dfs *KProbeEvents) LoadKProbeDescription(probe KProbe) (desc KProbeDesc, e
 				parseFormat = true
 			}
 		} else {
+
+			// Format ends on the first line that doesn't start with whitespace
+			if len(line) > 0 && line[0] != ' ' && line[0] != '\t' {
+				break
+			}
+
 			var f Field
-			matches := formatRegexp.FindAllStringSubmatch(scanner.Text(), -1)
-			//fmt.Fprintf(os.Stderr, "XXX Got matches = %v\n", matches)
+			matches := formatRegexp.FindAllStringSubmatch(line, -1)
 			if len(matches) != 4 {
 				continue
 			}
+
 			for _, match := range matches {
 				if len(match) != 3 {
-					// TODO
 					continue
 				}
 				key, value := match[1], match[2]
@@ -176,14 +211,12 @@ func (dfs *KProbeEvents) LoadKProbeDescription(probe KProbe) (desc KProbeDesc, e
 					fparts := strings.Split(value, " ")
 					n := len(fparts)
 					if n < 2 {
-						// TODO
-						panic(value)
+						return desc, fmt.Errorf("bad format for kprobe '%s': `field` has no type: %s", probe.String(), value)
 					}
-					f.Name = fparts[n-1]
-					fparts = fparts[:n-1]
-					typeIdx := -1
-					isDataLoc := false
-					//f.Type = strings.Join(fparts[:n-1], " ") // TODO cleanup
+
+					fparts, f.Name = fparts[:n-1], fparts[n-1]
+					typeIdx, isDataLoc := -1, false
+
 					for idx, part := range fparts {
 						switch part {
 						case "signed", "unsigned":
@@ -192,21 +225,21 @@ func (dfs *KProbeEvents) LoadKProbeDescription(probe KProbe) (desc KProbeDesc, e
 							isDataLoc = true
 						default:
 							if typeIdx != -1 {
-								panic("extra arguments in type:" + value)
+								return desc, fmt.Errorf("bad format for kprobe '%s': unknown parameter=`%s` in type=`%s`", probe.String(), part, value)
 							}
 							typeIdx = idx
 						}
 					}
 					if typeIdx == -1 {
-						panic("no type in:" + value)
+						return desc, fmt.Errorf("bad format for kprobe '%s': type not found in `%s`", probe.String(), value)
 					}
 					intLen, isInt := integerTypes[fparts[typeIdx]]
 					if isInt {
 						f.Type = FieldTypeInteger
-						f.Size = intLen
+						f.Size = int(intLen)
 					} else {
 						if fparts[typeIdx] != "char[]" || !isDataLoc {
-							panic("bad string type:" + value)
+							return desc, fmt.Errorf("bad format for kprobe '%s': bad string type in `%s`", probe.String(), value)
 						}
 						f.Type = FieldTypeString
 					}
@@ -216,6 +249,7 @@ func (dfs *KProbeEvents) LoadKProbeDescription(probe KProbe) (desc KProbeDesc, e
 					if err != nil {
 						return desc, err
 					}
+
 				case "size":
 					prev := f.Size
 					f.Size, err = strconv.Atoi(value)
@@ -223,14 +257,15 @@ func (dfs *KProbeEvents) LoadKProbeDescription(probe KProbe) (desc KProbeDesc, e
 						return desc, err
 					}
 					if prev != 0 && prev != f.Size {
-						panic("int field length mismatch at:" + value)
+						return desc, fmt.Errorf("bad format for kprobe '%s': int field length mismatch at `%s`", probe.String(), value)
 					}
+
 				case "signed":
-					f.Signed = len(value) > 0 && value[0] != '0'
+					f.Signed = len(value) > 0 && value[0] == '1'
 				}
 			}
 			if f.Type == FieldTypeString && f.Size != 4 {
-				panic("wrong size for string:" + scanner.Text())
+				return desc, fmt.Errorf("bad format for kprobe '%s': wrong size for string in `%s`", probe.String(), line)
 			}
 			desc.Fields[f.Name] = f
 		}

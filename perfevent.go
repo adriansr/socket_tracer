@@ -17,18 +17,29 @@ import (
 )
 
 var (
-	ErrUnsupported    = errors.New("perf_event_open is not supported by this kernel")
+	// ErrUnsupported error indicates that perf_event_open is not available
+	// in the current kernel.
+	ErrUnsupported = errors.New("perf_event_open is not supported by this kernel")
+
+	// ErrAlreadyRunning error is returned when a PerfChannel has already
+	// started after a call to run.
 	ErrAlreadyRunning = errors.New("channel already running")
-	ErrNotRunning     = errors.New("channel not running")
+
+	// ErrNotRunning error is returned by PerfChannel#Close when it has not been
+	// started.
+	ErrNotRunning = errors.New("channel not running")
 )
 
+// PerfChannel represents a channel to receive perf events.
 type PerfChannel struct {
 	done    chan struct{}
 	ev      *perf.Event
 	running uintptr
 }
 
-func NewPerfChannel(kprobe KProbeDesc) (channel *PerfChannel, err error) {
+// NewPerfChannel creates a new perf channel in order to receive events for
+// the given probe ID.
+func NewPerfChannel(kprobeID int) (channel *PerfChannel, err error) {
 	if !perf.Supported() {
 		return nil, ErrUnsupported
 	}
@@ -37,7 +48,7 @@ func NewPerfChannel(kprobe KProbeDesc) (channel *PerfChannel, err error) {
 	attr.Type = perf.TracepointEvent
 	attr.SetSamplePeriod(1)
 	attr.SetWakeupEvents(1)
-	attr.Config = uint64(kprobe.ID)
+	attr.Config = uint64(kprobeID)
 	attr.SampleFormat = perf.SampleFormat{Raw: true}
 
 	// TODO: #CPU?
@@ -52,6 +63,11 @@ func NewPerfChannel(kprobe KProbeDesc) (channel *PerfChannel, err error) {
 	return channel, nil
 }
 
+// Run enables the configured probe and starts receiving perf events.
+// sampleC is the channel where decoded perf events are received.
+// errC is the channel where errors are received.
+//
+// The format of the received events depends on the Decoder used.
 func (c *PerfChannel) Run(decoder Decoder) (sampleC <-chan interface{}, errC <-chan error, err error) {
 	if !atomic.CompareAndSwapUintptr(&c.running, 0, 1) {
 		return nil, nil, ErrAlreadyRunning
@@ -69,8 +85,9 @@ func (c *PerfChannel) Run(decoder Decoder) (sampleC <-chan interface{}, errC <-c
 	return sC, eC, nil
 }
 
+// Close closes the channel.
 func (c *PerfChannel) Close() error {
-	if !atomic.CompareAndSwapUintptr(&c.running, 1, 0) {
+	if !atomic.CompareAndSwapUintptr(&c.running, 1, 2) {
 		return ErrNotRunning
 	}
 	close(c.done)
@@ -80,6 +97,8 @@ func (c *PerfChannel) Close() error {
 func channelLoop(ev *perf.Event, decoder Decoder, sampleC chan<- interface{}, errC chan<- error, done <-chan struct{}) {
 	defer ev.Close()
 	defer ev.Disable()
+	defer close(sampleC)
+	defer close(errC)
 
 mainloop:
 	for {

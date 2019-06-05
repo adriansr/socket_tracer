@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"unsafe"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -27,7 +26,7 @@ var rawMsg = []byte{
 }
 
 func BenchmarkMapDecoder(b *testing.B) {
-	evs := NewKProbeEvents(DefaultDebugFSPath)
+	evs := NewEventTracing(DefaultDebugFSPath)
 	probe := KProbe{
 		Group:     "test_group",
 		Name:      "test_name",
@@ -38,7 +37,7 @@ func BenchmarkMapDecoder(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	desc, err := evs.LoadKProbeDescription(probe)
+	desc, err := evs.LoadKProbeFormat(probe)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -51,14 +50,14 @@ func BenchmarkMapDecoder(b *testing.B) {
 			b.Fatal(err)
 		}
 		m := iface.(map[string]interface{})
-		//b.Log("got map=", m)
+
 		for _, c := range m["exe"].(string) {
 			sum += int(c)
 		}
 		sum += int(m["fd"].(uint64))
 		sum += int(m["arg3"].(uint64))
 		sum += int(m["arg4"].(uint32))
-		sum += int(m["arg5"].(uint16))
+		sum += int(m["arg5"].(int16))
 		sum += int(m["arg6"].(uint8))
 	}
 	b.StopTimer()
@@ -66,7 +65,53 @@ func BenchmarkMapDecoder(b *testing.B) {
 	b.ReportAllocs()
 }
 
+// This test is to make sure that there is no delay between when a KProbe
+// is added and its 'format' file is available, that is, LoadKProbeDescription
+// can be called immediately after AddKProbe.
+func TestAddKProbeIsNotRacy(t *testing.T) {
+	evs := NewEventTracing(DefaultDebugFSPath)
+	probe := KProbe{
+		Group:     "test_group",
+		Name:      "test_name",
+		Address:   "sys_connect",
+		Fetchargs: "exe=$comm fd=%di +0(%si):x64 +8(%si):u32 +16(%si):s16 +24(%si):u8",
+	}
+	defer func() {
+		if err := evs.RemoveAllKProbes(); err != nil {
+			t.Fatal(err)
+		}
+	}()
+	for i := 0; i < 100; i++ {
+		if err := evs.AddKProbe(probe); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := evs.LoadKProbeFormat(probe); err != nil {
+			t.Fatal(err)
+		}
+		if err := evs.RemoveKProbe(probe); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkStructDecoder(b *testing.B) {
+
+	evs := NewEventTracing(DefaultDebugFSPath)
+	probe := KProbe{
+		Group:     "test_group",
+		Name:      "test_name",
+		Address:   "sys_connect",
+		Fetchargs: "exe=$comm fd=%di +0(%si):x64 +8(%si):u32 +16(%si):s16 +24(%si):u8",
+	}
+	err := evs.AddKProbe(probe)
+	if err != nil {
+		b.Fatal(err)
+	}
+	desc, err := evs.LoadKProbeFormat(probe)
+	if err != nil {
+		b.Fatal(err)
+	}
+
 	type myStruct struct {
 		Type   uint16 `kprobe:"common_type"`
 		Flags  uint8  `kprobe:"common_flags"`
@@ -80,27 +125,10 @@ func BenchmarkStructDecoder(b *testing.B) {
 		Arg5   uint16 `kprobe:"arg5"`
 		Arg6   uint8  `kprobe:"arg6"`
 	}
-	var myAlloc AllocateFn = func() (i interface{}, pointer unsafe.Pointer) {
-		s := new(myStruct)
-		return s, unsafe.Pointer(s)
+	var myAlloc AllocateFn = func() interface{} {
+		return new(myStruct)
 	}
 
-	evs := NewKProbeEvents(DefaultDebugFSPath)
-	probe := KProbe{
-		Group:     "test_group",
-		Name:      "test_name",
-		Address:   "sys_connect",
-		Fetchargs: "exe=$comm fd=%di +0(%si):x64 +8(%si):u32 +16(%si):s16 +24(%si):u8",
-	}
-	err := evs.AddKProbe(probe)
-	if err != nil {
-		b.Fatal(err)
-	}
-	desc, err := evs.LoadKProbeDescription(probe)
-	if err != nil {
-		b.Fatal(err)
-	}
-	//b.Logf("Got desc=%+v", desc)
 	decoder, err := NewStructDecoder(desc, myAlloc)
 	if err != nil {
 		b.Fatal(err)
@@ -113,7 +141,7 @@ func BenchmarkStructDecoder(b *testing.B) {
 			b.Fatal(err)
 		}
 		m := iface.(*myStruct)
-		//b.Log("got map=", m)
+
 		for _, c := range m.Exe {
 			sum += int(c)
 		}
@@ -129,9 +157,12 @@ func BenchmarkStructDecoder(b *testing.B) {
 }
 
 func TestKProbeReal(t *testing.T) {
-	evs := NewKProbeEvents(DefaultDebugFSPath)
+	t.SkipNow()
+
+	// Skipped ...
+	evs := NewEventTracing(DefaultDebugFSPath)
 	listAll := func() []KProbe {
-		list, err := evs.List()
+		list, err := evs.ListKProbes()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -178,14 +209,14 @@ func TestKProbeReal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	desc, err := evs.LoadKProbeDescription(probe)
+	desc, err := evs.LoadKProbeFormat(probe)
 	if err != nil {
 		t.Fatal(err)
 	}
 	fmt.Fprintf(os.Stderr, "desc=%+v\n", desc)
 	decoder := NewMapDecoder(desc)
 
-	channel, err := NewPerfChannel(desc)
+	channel, err := NewPerfChannel(desc.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,8 +284,8 @@ w:future feature
 		t.Fatal(err)
 	}
 
-	evs := NewKProbeEvents(tmpDir)
-	kprobes, err := evs.List()
+	evs := NewEventTracing(tmpDir)
+	kprobes, err := evs.ListKProbes()
 	if err != nil {
 		panic(err)
 	}
@@ -307,7 +338,7 @@ w:future feature
 		t.Fatal(err)
 	}
 
-	evs := NewKProbeEvents(tmpDir)
+	evs := NewEventTracing(tmpDir)
 	p1 := KProbe{Group: "kprobe", Name: "myprobe", Address: "sys_open", Fetchargs: "path=+0(%di):string mode=%si"}
 	p2 := KProbe{Type: TypeKRetProbe, Name: "myretprobe", Address: "0xffffff123456", Fetchargs: "+0(%di) +8(%di) +16(%di)"}
 	assert.NoError(t, evs.AddKProbe(p1))
