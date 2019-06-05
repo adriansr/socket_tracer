@@ -76,10 +76,10 @@ func (kp *KProbe) RemoveString() string {
 }
 
 // EffectiveGroup is the actual group used to access this kprobe inside debugfs.
-// It is the group given when setting the probe, or "kprobe" if unset.
+// It is the group given when setting the probe, or "kprobes" if unset.
 func (kp *KProbe) EffectiveGroup() string {
 	if len(kp.Group) > 0 {
 		return kp.Group
 	}
-	return "kprobe"
+	return "kprobes"
 }
