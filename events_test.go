@@ -159,7 +159,7 @@ func BenchmarkStructDecoder(b *testing.B) {
 
 func TestKProbeReal(t *testing.T) {
 	// Skipped ...
-	t.SkipNow()
+	//t.SkipNow()
 
 	evs := NewEventTracing(DefaultDebugFSPath)
 	listAll := func() []KProbe {
@@ -201,7 +201,7 @@ func TestKProbeReal(t *testing.T) {
 	}
 	probe := KProbe{
 		Name:    "test_kprobe",
-		Address: "sys_connect",
+		Address: "sys_accept",
 		//Fetchargs: "exe=$comm fd=%di +0(%si) +8(%si) +16(%si) +24(%si) +99999(%ax):string",
 		Fetchargs: "exe=$comm +0(+0(%dx)):string",
 	}
@@ -228,7 +228,10 @@ func TestKProbeReal(t *testing.T) {
 
 	for active := true; active; {
 		select {
-		case iface := <-sampleC:
+		case iface, ok := <-sampleC:
+			if !ok {
+				break
+			}
 			data := iface.(map[string]interface{})
 			_, err = fmt.Fprintf(os.Stderr, "Got event len=%d\n", len(data))
 			if err != nil {
@@ -254,7 +257,7 @@ func TestKProbeReal(t *testing.T) {
 	t.Logf("Got description: %+v", desc)
 	err = evs.RemoveKProbe(probe)
 	if err != nil {
-		panic(err)
+		t.Fatal(err)
 	}
 }
 

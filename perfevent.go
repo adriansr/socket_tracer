@@ -49,7 +49,11 @@ func NewPerfChannel(kprobeID int) (channel *PerfChannel, err error) {
 	attr.SetSamplePeriod(1)
 	attr.SetWakeupEvents(1)
 	attr.Config = uint64(kprobeID)
-	attr.SampleFormat = perf.SampleFormat{Raw: true}
+	attr.SampleFormat = perf.SampleFormat{
+		// Careful, Adding more fields here changes the raw data format.
+		// Time: true,
+		Raw: true,
+	}
 
 	// TODO: #CPU?
 	ev, err := perf.Open(attr, perf.AllThreads, 0, nil)
@@ -76,11 +80,11 @@ func (c *PerfChannel) Run(decoder Decoder) (sampleC <-chan interface{}, errC <-c
 		atomic.StoreUintptr(&c.running, 0)
 		return nil, nil, errors.Wrap(err, "perf channel enable failed")
 	}
-	if err := c.ev.MapRing(); err != nil {
+	if err := c.ev.MapRingNumPages(2); err != nil {
 		return nil, nil, errors.Wrap(err, "perf channel mapring failed")
 	}
-	sC := make(chan interface{})
-	eC := make(chan error, 1)
+	sC := make(chan interface{}, 4096)
+	eC := make(chan error, 64)
 	go channelLoop(c.ev, decoder, sC, eC, c.done)
 	return sC, eC, nil
 }
@@ -94,15 +98,49 @@ func (c *PerfChannel) Close() error {
 	return nil
 }
 
+var recvCount, lostCount uint64
+
+func statsLoop(done <-chan struct{}) {
+
+	lastRecv := atomic.LoadUint64(&recvCount)
+	lastLost := atomic.LoadUint64(&lostCount)
+	lastCheck := time.Now()
+
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	for t := range ticker.C {
+		select {
+		case <-done:
+			return
+		default:
+		}
+
+		elapsed := t.Sub(lastCheck)
+		recv := atomic.LoadUint64(&recvCount)
+		lost := atomic.LoadUint64(&lostCount)
+
+		fmt.Fprintf(os.Stderr, "Read %d lost %d (%.01f eps / %.01f lps)\n",
+			recv, lost,
+			float64(recv-lastRecv)/elapsed.Seconds(),
+			float64(lost-lastLost)/elapsed.Seconds())
+
+		lastCheck, lastRecv, lastLost = t, recv, lost
+	}
+}
+
 func channelLoop(ev *perf.Event, decoder Decoder, sampleC chan<- interface{}, errC chan<- error, done <-chan struct{}) {
 	defer ev.Close()
 	defer ev.Disable()
 	defer close(sampleC)
 	defer close(errC)
 
+	go statsLoop(done)
+
 mainloop:
 	for {
-		fmt.Fprintf(os.Stderr, "Reading samples...\n")
+		//fmt.Fprintf(os.Stderr, "Reading samples... (count=%d lost=%d)\n",
+		//	atomic.LoadUint64(&recvCount), atomic.LoadUint64(&lostCount))
 		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(time.Second))
 		var raw perf.RawRecord
 		err := ev.ReadRawRecord(ctx, &raw)
@@ -119,15 +157,29 @@ mainloop:
 			break mainloop
 		default:
 		}
-		if raw.Header.Type != unix.PERF_RECORD_SAMPLE {
-			continue
-		}
+		switch raw.Header.Type {
+		case unix.PERF_RECORD_SAMPLE:
+			atomic.AddUint64(&recvCount, 1)
+			output, err := decoder.Decode(raw.Data)
+			if err != nil {
+				if false {
+					errC <- err
+				}
+				continue
+			}
+			if false {
+				sampleC <- output
+			}
+			//time.Sleep(5 * time.Second)
 
-		output, err := decoder.Decode(raw.Data)
-		if err != nil {
-			errC <- err
-			continue
+		case unix.PERF_RECORD_LOST:
+			//fmt.Fprintf(os.Stderr, "Got lost: %+v\n%s\n", raw.Header, hex.Dump(raw.Data))
+			var lost uint64 = 1
+			if len(raw.Data) >= 16 {
+				lost = machineEndian.Uint64(raw.Data[8:])
+			}
+			atomic.AddUint64(&lostCount, lost)
+			//return
 		}
-		sampleC <- output
 	}
 }
