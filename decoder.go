@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
-	"strings"
 	"unsafe"
 )
 
@@ -46,11 +45,7 @@ func (f mapDecoder) Decode(raw []byte) (mapIf interface{}, err error) {
 	n := len(raw)
 	m := make(map[string]interface{}, len(f))
 	if false {
-		var r []string
-		for i := range raw {
-			r = append(r, hex.EncodeToString(raw[i:i+1]))
-		}
-		m["_raw_"] = strings.Join(r, ", 0x")
+		m["_raw_"] = hex.Dump(raw)
 	}
 	for _, field := range f {
 		if field.Offset+field.Size > n {
@@ -97,7 +92,10 @@ func (f mapDecoder) Decode(raw []byte) (mapIf interface{}, err error) {
 			if offset+len > n {
 				return nil, fmt.Errorf("perf event string data for field %s overflows message of size %d", field.Name, n)
 			}
-			value = string(raw[offset : offset+len])
+			// (null) strings have data offset equal to string description offset
+			if len != 0 || offset != field.Offset {
+				value = string(raw[offset : offset+len])
+			}
 		}
 		m[field.Name] = value
 	}

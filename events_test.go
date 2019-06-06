@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -157,9 +158,9 @@ func BenchmarkStructDecoder(b *testing.B) {
 }
 
 func TestKProbeReal(t *testing.T) {
-	t.SkipNow()
-
 	// Skipped ...
+	///t.SkipNow()
+
 	evs := NewEventTracing(DefaultDebugFSPath)
 	listAll := func() []KProbe {
 		list, err := evs.ListKProbes()
@@ -194,16 +195,15 @@ func TestKProbeReal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, kprobe := range listAll() {
-		if err := evs.RemoveKProbe(kprobe); err != nil {
-			t.Fatal(err, kprobe.String())
-		}
+
+	if err := evs.RemoveAllKProbes(); err != nil {
+		t.Fatal(err)
 	}
 	probe := KProbe{
-		Group:     "test_group",
-		Name:      "test_name",
-		Address:   "sys_connect",
-		Fetchargs: "exe=$comm fd=%di +0(%si) +8(%si) +16(%si) +24(%si)",
+		Name:    "test_kprobe",
+		Address: "sys_connect",
+		//Fetchargs: "exe=$comm fd=%di +0(%si) +8(%si) +16(%si) +24(%si) +99999(%ax):string",
+		Fetchargs: "exe=$comm +0(+0(%dx)):string",
 	}
 	err = evs.AddKProbe(probe)
 	if err != nil {
@@ -234,11 +234,12 @@ func TestKProbeReal(t *testing.T) {
 			if err != nil {
 				panic(err)
 			}
-			_, err = fmt.Fprintf(os.Stderr, "%+v\n", data)
-			if err != nil {
-				panic(err)
+			fmt.Fprintf(os.Stderr, "%s event:\n", time.Now().Format(time.RFC3339Nano))
+			for k := range desc.Fields {
+				v := data[k]
+				fmt.Fprintf(os.Stderr, "    %s: %v\n", k, v)
 			}
-
+			fmt.Fprintf(os.Stderr, "    raw:\n%s\n", data["_raw_"])
 		case err := <-errC:
 			t.Log("Err received from channel:", err)
 			active = false
