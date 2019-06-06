@@ -25,15 +25,16 @@ type mapDecoder []Field
 // described in the format.
 // The map keys are the field names as given in the format.
 // The map values are fixed-size integers for integer fields:
-// uint8, uint16, uint32, uint64, or their signed counterpart, for signed fields.
+// uint8, uint16, uint32, uint64, or, for signed fields, their signed counterpart.
 // For string fields, the value is a string.
+// Null string fields will be the null interface.
 func NewMapDecoder(format KProbeFormat) Decoder {
 	fields := make([]Field, 0, len(format.Fields))
 	for _, field := range format.Fields {
 		fields = append(fields, field)
 	}
 	sort.Slice(fields, func(i, j int) bool {
-		return fields[i].Offset < fields[i].Offset
+		return fields[i].Offset < fields[j].Offset
 	})
 	return mapDecoder(fields)
 }
@@ -132,6 +133,8 @@ var intFields = map[reflect.Kind]struct{}{
 	reflect.Uint64: {},
 }
 
+const maxIntSizeBytes = 8
+
 // NewMapDecoder creates a new decoder that will parse raw tracing events
 // into a struct.
 //
@@ -194,6 +197,11 @@ func NewStructDecoder(desc KProbeFormat, allocFn AllocateFn) (Decoder, error) {
 				return nil, fmt.Errorf("wrong struct field size for field '%s', got=%d required=%d",
 					name, outField.Type.Size(), inField.Size)
 			}
+			// Paranoid
+			if inField.Size > maxIntSizeBytes {
+				return nil, fmt.Errorf("fix me: unexpected integer of size %d in field `%s`",
+					inField.Size, name)
+			}
 
 		case FieldTypeString:
 			if outField.Type.Kind() != reflect.String {
@@ -213,7 +221,7 @@ func NewStructDecoder(desc KProbeFormat, allocFn AllocateFn) (Decoder, error) {
 		})
 	}
 	sort.Slice(dec.fields, func(i, j int) bool {
-		return dec.fields[i].src < dec.fields[i].dst
+		return dec.fields[i].src < dec.fields[j].src
 	})
 	return dec, nil
 }
@@ -224,7 +232,10 @@ func (d *structDecoder) Decode(raw []byte) (s interface{}, err error) {
 	}
 	n := uintptr(len(raw))
 
+	// Allocate a new struct to fill
 	s = d.alloc()
+
+	// Get a raw pointer to the struct
 	uptr := reflect.ValueOf(s).Pointer()
 
 	for _, dec := range d.fields {
@@ -233,7 +244,8 @@ func (d *structDecoder) Decode(raw []byte) (s interface{}, err error) {
 		}
 		switch dec.typ {
 		case FieldTypeInteger:
-			copy((*(*[8]byte)(unsafe.Pointer(uptr + dec.dst)))[:dec.len], raw[dec.src:dec.src+dec.len])
+			// copy the integer in place.
+			copy((*(*[maxIntSizeBytes]byte)(unsafe.Pointer(uptr + dec.dst)))[:dec.len], raw[dec.src:dec.src+dec.len])
 
 		case FieldTypeString:
 			offset := uintptr(machineEndian.Uint16(raw[dec.src:]))

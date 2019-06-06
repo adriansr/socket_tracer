@@ -151,16 +151,16 @@ type KProbeFormat struct {
 
 var integerTypes = map[string]uint8{
 	"char":  1,
-	"short": 2,
-	"int":   4,
-	"long":  8,
 	"s8":    1,
-	"s16":   2,
-	"s32":   4,
-	"s64":   8,
 	"u8":    1,
+	"short": 2,
+	"s16":   2,
 	"u16":   2,
+	"int":   4,
+	"s32":   4,
 	"u32":   4,
+	"long":  8,
+	"s64":   8,
 	"u64":   8,
 }
 
@@ -179,6 +179,7 @@ func (dfs *EventTracing) LoadKProbeFormat(probe KProbe) (desc KProbeFormat, err 
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !parseFormat {
+			// Parse the header
 			parts := strings.SplitN(line, ": ", 2)
 			switch {
 			case len(parts) == 2 && parts[0] == "ID":
@@ -189,12 +190,15 @@ func (dfs *EventTracing) LoadKProbeFormat(probe KProbe) (desc KProbeFormat, err 
 				parseFormat = true
 			}
 		} else {
-
-			// Format ends on the first line that doesn't start with whitespace
-			if len(line) > 0 && line[0] != ' ' && line[0] != '\t' {
+			// Parse the fields
+			// Ends on the first line that doesn't start with a TAB
+			if len(line) > 0 && line[0] != '\t' && line[0] != ' ' {
 				break
 			}
 
+			// Find all "<key>:<value>;" matches
+			// The actual format is:
+			// "\tfield:%s %s;\toffset:%u;\tsize:%u;\tsigned:%d;\n"
 			var f Field
 			matches := formatRegexp.FindAllStringSubmatch(line, -1)
 			if len(matches) != 4 {
@@ -239,7 +243,7 @@ func (dfs *EventTracing) LoadKProbeFormat(probe KProbe) (desc KProbeFormat, err 
 						f.Size = int(intLen)
 					} else {
 						if fparts[typeIdx] != "char[]" || !isDataLoc {
-							return desc, fmt.Errorf("bad format for kprobe '%s': bad string type in `%s`", probe.String(), value)
+							return desc, fmt.Errorf("bad format for kprobe '%s': unsupported type in `%s`", probe.String(), value)
 						}
 						f.Type = FieldTypeString
 					}
@@ -257,7 +261,7 @@ func (dfs *EventTracing) LoadKProbeFormat(probe KProbe) (desc KProbeFormat, err 
 						return desc, err
 					}
 					if prev != 0 && prev != f.Size {
-						return desc, fmt.Errorf("bad format for kprobe '%s': int field length mismatch at `%s`", probe.String(), value)
+						return desc, fmt.Errorf("bad format for kprobe '%s': int field length mismatch at `%s`", probe.String(), line)
 					}
 
 				case "signed":
@@ -265,17 +269,10 @@ func (dfs *EventTracing) LoadKProbeFormat(probe KProbe) (desc KProbeFormat, err 
 				}
 			}
 			if f.Type == FieldTypeString && f.Size != 4 {
-				return desc, fmt.Errorf("bad format for kprobe '%s': wrong size for string in `%s`", probe.String(), line)
+				return desc, fmt.Errorf("bad format for kprobe '%s': unexpected size for string in `%s`", probe.String(), line)
 			}
 			desc.Fields[f.Name] = f
 		}
 	}
 	return desc, nil
-}
-
-func fileMode(path string, mode os.FileMode) bool {
-	if fInfo, err := os.Stat(path); err == nil {
-		return (fInfo.Mode() & (os.ModeDir | mode)) == mode
-	}
-	return false
 }

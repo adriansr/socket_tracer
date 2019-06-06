@@ -159,7 +159,7 @@ func BenchmarkStructDecoder(b *testing.B) {
 
 func TestKProbeReal(t *testing.T) {
 	// Skipped ...
-	///t.SkipNow()
+	t.SkipNow()
 
 	evs := NewEventTracing(DefaultDebugFSPath)
 	listAll := func() []KProbe {

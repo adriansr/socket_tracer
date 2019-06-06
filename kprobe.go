@@ -22,8 +22,8 @@ type KProbe struct {
 	Type KProbeType
 
 	// Group is the KProbe's group. If left unset, it will be automatically
-	// set to "kprobe". This affects where in `debugfs` the kprobe configuration
-	// will reside:
+	// set to "kprobes". This affects where the kprobe configuration resides
+	// in `debugfs`:
 	// /sys/kernel/debug/tracing/events/<group>/<name>
 	Group string
 
@@ -62,7 +62,7 @@ func (kp *KProbe) String() string {
 	return builder.String()
 }
 
-// UninstallString converts this probe to the textual representation needed to
+// RemoveString converts this probe to the textual representation needed to
 // remove the probe.
 func (kp *KProbe) RemoveString() string {
 	var builder strings.Builder
