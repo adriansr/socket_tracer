@@ -12,12 +12,12 @@ import (
 var machineEndian = getCPUEndianness()
 
 func getCPUEndianness() binary.ByteOrder {
-	a := [2]byte{0x12, 0x34}
-	asInt := *((*uint16)(unsafe.Pointer(&a[0])))
-	switch asInt {
-	case 0x1234:
+	myInt32 := new(uint32)
+	copy((*[4]byte)(unsafe.Pointer(myInt32))[:], []byte{0x12, 0x34, 0x56, 0x78})
+	switch *myInt32 {
+	case 0x12345678:
 		return binary.BigEndian
-	case 0x3412:
+	case 0x78563412:
 		return binary.LittleEndian
 	default:
 		panic("couldn't figure out endianness")
