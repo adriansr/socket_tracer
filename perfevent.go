@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"runtime"
 	"sync/atomic"
 	"time"
 
@@ -33,7 +34,7 @@ var (
 // PerfChannel represents a channel to receive perf events.
 type PerfChannel struct {
 	done    chan struct{}
-	ev      *perf.Event
+	evs     []*perf.Event
 	running uintptr
 }
 
@@ -55,14 +56,16 @@ func NewPerfChannel(kprobeID int) (channel *PerfChannel, err error) {
 		Raw: true,
 	}
 
-	// TODO: #CPU?
-	ev, err := perf.Open(attr, perf.AllThreads, 0, nil)
-	if err != nil {
-		return nil, err
+	evs := make([]*perf.Event, runtime.NumCPU())
+	for idx := range evs {
+		evs[idx], err = perf.Open(attr, perf.AllThreads, idx, nil)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	channel = new(PerfChannel)
-	channel.ev = ev
+	channel.evs = evs
 	channel.done = make(chan struct{})
 	return channel, nil
 }
@@ -76,16 +79,22 @@ func (c *PerfChannel) Run(decoder Decoder) (sampleC <-chan interface{}, errC <-c
 	if !atomic.CompareAndSwapUintptr(&c.running, 0, 1) {
 		return nil, nil, ErrAlreadyRunning
 	}
-	if err := c.ev.Enable(); err != nil {
-		atomic.StoreUintptr(&c.running, 0)
-		return nil, nil, errors.Wrap(err, "perf channel enable failed")
-	}
-	if err := c.ev.MapRingNumPages(2); err != nil {
-		return nil, nil, errors.Wrap(err, "perf channel mapring failed")
-	}
 	sC := make(chan interface{}, 4096)
 	eC := make(chan error, 64)
-	go channelLoop(c.ev, decoder, sC, eC, c.done)
+
+	for _, ev := range c.evs {
+		if err := ev.Enable(); err != nil {
+			return nil, nil, errors.Wrap(err, "perf channel enable failed")
+		}
+		if err := ev.MapRingNumPages(128); err != nil {
+			return nil, nil, errors.Wrap(err, "perf channel mapring failed")
+		}
+
+		go channelLoop(ev, decoder, sC, eC, c.done)
+	}
+
+	go statsLoop(c.done)
+
 	return sC, eC, nil
 }
 
@@ -135,8 +144,6 @@ func channelLoop(ev *perf.Event, decoder Decoder, sampleC chan<- interface{}, er
 	defer close(sampleC)
 	defer close(errC)
 
-	go statsLoop(done)
-
 mainloop:
 	for {
 		//fmt.Fprintf(os.Stderr, "Reading samples... (count=%d lost=%d)\n",
@@ -159,8 +166,8 @@ mainloop:
 		}
 		switch raw.Header.Type {
 		case unix.PERF_RECORD_SAMPLE:
-			atomic.AddUint64(&recvCount, 1)
 			output, err := decoder.Decode(raw.Data)
+			atomic.AddUint64(&recvCount, 1)
 			if err != nil {
 				if false {
 					errC <- err

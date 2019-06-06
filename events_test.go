@@ -215,6 +215,17 @@ func TestKProbeReal(t *testing.T) {
 	}
 	fmt.Fprintf(os.Stderr, "desc=%+v\n", desc)
 	decoder := NewMapDecoder(desc)
+	/*type myStruct struct {
+		//Exe string `kprobe:"exe"`
+		PID uint32 `kprobe:"common_pid"`
+	}
+	var allocFn = func() interface{} {
+		return new(myStruct)
+	}
+	decoder, err := NewStructDecoder(desc, allocFn)
+	if err != nil {
+		t.Fatal(err)
+	}*/
 
 	channel, err := NewPerfChannel(desc.ID)
 	if err != nil {
