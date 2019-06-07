@@ -70,20 +70,19 @@ func main() {
 			if !ok {
 				break
 			}
-			if false {
-				data := iface.(map[string]interface{})
-				_, err = fmt.Fprintf(os.Stderr, "Got event len=%d\n", len(data))
-				if err != nil {
-					panic(err)
-				}
-
-				fmt.Fprintf(os.Stderr, "%s event:\n", time.Now().Format(time.RFC3339Nano))
-				for k := range desc.Fields {
-					v := data[k]
-					fmt.Fprintf(os.Stderr, "    %s: %v\n", k, v)
-				}
-				fmt.Fprintf(os.Stderr, "    raw:\n%s\n", data["_raw_"])
+			data := iface.(map[string]interface{})
+			_, err = fmt.Fprintf(os.Stderr, "Got event len=%d\n", len(data))
+			if err != nil {
+				panic(err)
 			}
+
+			fmt.Fprintf(os.Stderr, "%s event:\n", time.Now().Format(time.RFC3339Nano))
+			for k := range desc.Fields {
+				v := data[k]
+				fmt.Fprintf(os.Stderr, "    %s: %v\n", k, v)
+			}
+			fmt.Fprintf(os.Stderr, "    raw:\n%s\n", data["_raw_"])
+
 		case err := <-errC:
 			fmt.Fprintf(os.Stderr, "Err received from channel:", err)
 			active = false
