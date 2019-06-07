@@ -191,14 +191,10 @@ func (c *PerfChannel) channelLoop(ev *perf.Event, decoder Decoder) {
 			output, err := decoder.Decode(raw.Data)
 			atomic.AddUint64(&recvCount, 1)
 			if err != nil {
-				if false {
-					c.eC <- err
-				}
+				c.eC <- err
 				continue
 			}
-			if false {
-				c.sC <- output
-			}
+			c.sC <- output
 
 		case unix.PERF_RECORD_LOST:
 			var lost uint64 = 1
