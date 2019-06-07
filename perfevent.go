@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -34,8 +35,11 @@ var (
 // PerfChannel represents a channel to receive perf events.
 type PerfChannel struct {
 	done    chan struct{}
+	sC      chan interface{}
+	eC      chan error
 	evs     []*perf.Event
 	running uintptr
+	wg      sync.WaitGroup
 }
 
 // NewPerfChannel creates a new perf channel in order to receive events for
@@ -79,8 +83,8 @@ func (c *PerfChannel) Run(decoder Decoder) (sampleC <-chan interface{}, errC <-c
 	if !atomic.CompareAndSwapUintptr(&c.running, 0, 1) {
 		return nil, nil, ErrAlreadyRunning
 	}
-	sC := make(chan interface{}, 4096)
-	eC := make(chan error, 64)
+	c.sC = make(chan interface{}, 4096)
+	c.eC = make(chan error, 64)
 
 	for _, ev := range c.evs {
 		if err := ev.Enable(); err != nil {
@@ -89,13 +93,13 @@ func (c *PerfChannel) Run(decoder Decoder) (sampleC <-chan interface{}, errC <-c
 		if err := ev.MapRingNumPages(128); err != nil {
 			return nil, nil, errors.Wrap(err, "perf channel mapring failed")
 		}
-
-		go channelLoop(ev, decoder, sC, eC, c.done)
+		c.wg.Add(1)
+		go c.channelLoop(ev, decoder)
 	}
 
 	go statsLoop(c.done)
 
-	return sC, eC, nil
+	return c.sC, c.eC, nil
 }
 
 // Close closes the channel.
@@ -104,6 +108,9 @@ func (c *PerfChannel) Close() error {
 		return ErrNotRunning
 	}
 	close(c.done)
+	c.wg.Wait()
+	defer close(c.sC)
+	defer close(c.eC)
 	return nil
 }
 
@@ -138,31 +145,46 @@ func statsLoop(done <-chan struct{}) {
 	}
 }
 
-func channelLoop(ev *perf.Event, decoder Decoder, sampleC chan<- interface{}, errC chan<- error, done <-chan struct{}) {
+type doneWrapperContext <-chan struct{}
+
+func (ctx doneWrapperContext) Deadline() (deadline time.Time, ok bool) {
+	return time.Time{}, false
+}
+
+func (ctx doneWrapperContext) Done() <-chan struct{} {
+	return (<-chan struct{})(ctx)
+}
+
+func (ctx doneWrapperContext) Err() error {
+	select {
+	case <-ctx.Done():
+		return context.Canceled
+	default:
+	}
+	return nil
+}
+
+func (ctx doneWrapperContext) Value(key interface{}) interface{} {
+	return nil
+}
+
+func (c *PerfChannel) channelLoop(ev *perf.Event, decoder Decoder) {
+	defer c.wg.Done()
 	defer ev.Close()
 	defer ev.Disable()
-	defer close(sampleC)
-	defer close(errC)
 
-mainloop:
+	ctx := doneWrapperContext(c.done)
+
 	for {
-		//fmt.Fprintf(os.Stderr, "Reading samples... (count=%d lost=%d)\n",
-		//	atomic.LoadUint64(&recvCount), atomic.LoadUint64(&lostCount))
-		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(time.Second))
 		var raw perf.RawRecord
 		err := ev.ReadRawRecord(ctx, &raw)
 		if ctx.Err() != nil {
-			continue
-		}
-		cancel()
-		if err != nil {
-			errC <- err
+			fmt.Fprintf(os.Stderr, "Read loop terminated\n")
 			break
 		}
-		select {
-		case <-done:
-			break mainloop
-		default:
+		if err != nil {
+			c.eC <- err
+			break
 		}
 		switch raw.Header.Type {
 		case unix.PERF_RECORD_SAMPLE:
@@ -170,23 +192,20 @@ mainloop:
 			atomic.AddUint64(&recvCount, 1)
 			if err != nil {
 				if false {
-					errC <- err
+					c.eC <- err
 				}
 				continue
 			}
 			if false {
-				sampleC <- output
+				c.sC <- output
 			}
-			//time.Sleep(5 * time.Second)
 
 		case unix.PERF_RECORD_LOST:
-			//fmt.Fprintf(os.Stderr, "Got lost: %+v\n%s\n", raw.Header, hex.Dump(raw.Data))
 			var lost uint64 = 1
 			if len(raw.Data) >= 16 {
 				lost = machineEndian.Uint64(raw.Data[8:])
 			}
 			atomic.AddUint64(&lostCount, lost)
-			//return
 		}
 	}
 }

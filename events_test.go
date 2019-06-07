@@ -32,7 +32,7 @@ func BenchmarkMapDecoder(b *testing.B) {
 		Group:     "test_group",
 		Name:      "test_name",
 		Address:   "sys_connect",
-		Fetchargs: "exe=$comm fd=%di +0(%si):x64 +8(%si):u32 +16(%si):s16 +24(%si):u8",
+		Fetchargs: "exe=$comm fd=%di +0(%si):x8 +8(%si):u64 +16(%si):s16 +24(%si):u32",
 	}
 	err := evs.AddKProbe(probe)
 	if err != nil {
@@ -56,10 +56,10 @@ func BenchmarkMapDecoder(b *testing.B) {
 			sum += int(c)
 		}
 		sum += int(m["fd"].(uint64))
-		sum += int(m["arg3"].(uint64))
-		sum += int(m["arg4"].(uint32))
+		sum += int(m["arg3"].(uint8))
+		sum += int(m["arg4"].(uint64))
 		sum += int(m["arg5"].(int16))
-		sum += int(m["arg6"].(uint8))
+		sum += int(m["arg6"].(uint32))
 	}
 	b.StopTimer()
 	b.Log("result sum=", sum)
@@ -102,7 +102,7 @@ func BenchmarkStructDecoder(b *testing.B) {
 		Group:     "test_group",
 		Name:      "test_name",
 		Address:   "sys_connect",
-		Fetchargs: "exe=$comm fd=%di +0(%si):x64 +8(%si):u32 +16(%si):s16 +24(%si):u8",
+		Fetchargs: "exe=$comm fd=%di +0(%si):x8 +8(%si):u64 +16(%si):s16 +24(%si):u32",
 	}
 	err := evs.AddKProbe(probe)
 	if err != nil {
@@ -121,10 +121,10 @@ func BenchmarkStructDecoder(b *testing.B) {
 		IP     uint64 `kprobe:"__probe_ip"`
 		Exe    string `kprobe:"exe"`
 		Fd     uint64 `kprobe:"fd"`
-		Arg3   uint64 `kprobe:"arg3"`
-		Arg4   uint32 `kprobe:"arg4"`
+		Arg3   uint8  `kprobe:"arg3"`
+		Arg4   uint64 `kprobe:"arg4"`
 		Arg5   uint16 `kprobe:"arg5"`
-		Arg6   uint8  `kprobe:"arg6"`
+		Arg6   uint32 `kprobe:"arg6"`
 	}
 	var myAlloc AllocateFn = func() interface{} {
 		return new(myStruct)
@@ -203,7 +203,7 @@ func TestKProbeReal(t *testing.T) {
 		Name:    "test_kprobe",
 		Address: "sys_accept",
 		//Fetchargs: "exe=$comm fd=%di +0(%si) +8(%si) +16(%si) +24(%si) +99999(%ax):string",
-		Fetchargs: "exe=$comm +0(+0(%dx)):string",
+		Fetchargs: "ax=%ax bx=%bx:u8 cx=%cx:u32 dx=%dx:s16",
 	}
 	err = evs.AddKProbe(probe)
 	if err != nil {
@@ -213,19 +213,27 @@ func TestKProbeReal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fmt.Fprintf(os.Stderr, "desc=%+v\n", desc)
-	decoder := NewMapDecoder(desc)
-	/*type myStruct struct {
-		//Exe string `kprobe:"exe"`
-		PID uint32 `kprobe:"common_pid"`
+	//fmt.Fprintf(os.Stderr, "desc=%+v\n", desc)
+	var decoder Decoder
+	const useStructDecoder = true
+	if useStructDecoder {
+		type myStruct struct {
+			//Exe string `kprobe:"exe"`
+			PID uint32 `kprobe:"common_pid"`
+			AX  int64  `kprobe:"ax"`
+			BX  uint8  `kprobe:"bx"`
+			CX  int32  `kprobe:"cx"`
+			DX  uint16 `kprobe:"dx"`
+		}
+		var allocFn = func() interface{} {
+			return new(myStruct)
+		}
+		if decoder, err = NewStructDecoder(desc, allocFn); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		decoder = NewMapDecoder(desc)
 	}
-	var allocFn = func() interface{} {
-		return new(myStruct)
-	}
-	decoder, err := NewStructDecoder(desc, allocFn)
-	if err != nil {
-		t.Fatal(err)
-	}*/
 
 	channel, err := NewPerfChannel(desc.ID)
 	if err != nil {
@@ -237,23 +245,31 @@ func TestKProbeReal(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	timer := time.NewTimer(time.Second * 10)
+	defer timer.Stop()
+
 	for active := true; active; {
 		select {
+		case <-timer.C:
+			active = false
 		case iface, ok := <-sampleC:
 			if !ok {
 				break
 			}
-			data := iface.(map[string]interface{})
-			_, err = fmt.Fprintf(os.Stderr, "Got event len=%d\n", len(data))
-			if err != nil {
-				panic(err)
+			if false {
+				data := iface.(map[string]interface{})
+				_, err = fmt.Fprintf(os.Stderr, "Got event len=%d\n", len(data))
+				if err != nil {
+					panic(err)
+				}
+
+				fmt.Fprintf(os.Stderr, "%s event:\n", time.Now().Format(time.RFC3339Nano))
+				for k := range desc.Fields {
+					v := data[k]
+					fmt.Fprintf(os.Stderr, "    %s: %v\n", k, v)
+				}
+				fmt.Fprintf(os.Stderr, "    raw:\n%s\n", data["_raw_"])
 			}
-			fmt.Fprintf(os.Stderr, "%s event:\n", time.Now().Format(time.RFC3339Nano))
-			for k := range desc.Fields {
-				v := data[k]
-				fmt.Fprintf(os.Stderr, "    %s: %v\n", k, v)
-			}
-			fmt.Fprintf(os.Stderr, "    raw:\n%s\n", data["_raw_"])
 		case err := <-errC:
 			t.Log("Err received from channel:", err)
 			active = false

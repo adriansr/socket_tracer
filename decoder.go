@@ -53,37 +53,10 @@ func (f mapDecoder) Decode(raw []byte) (mapIf interface{}, err error) {
 			return nil, fmt.Errorf("perf event field %s overflows message of size %d", field.Name, n)
 		}
 		var value interface{}
+		ptr := unsafe.Pointer(&raw[field.Offset])
 		switch field.Type {
 		case FieldTypeInteger:
-			switch field.Size {
-			case 1:
-				if field.Signed {
-					value = int8(raw[field.Offset])
-				} else {
-					value = uint8(raw[field.Offset])
-				}
-			case 2:
-				if field.Signed {
-					value = int16(machineEndian.Uint16(raw[field.Offset:]))
-				} else {
-					value = machineEndian.Uint16(raw[field.Offset:])
-				}
-
-			case 4:
-				if field.Signed {
-					value = int32(machineEndian.Uint32(raw[field.Offset:]))
-				} else {
-					value = machineEndian.Uint32(raw[field.Offset:])
-				}
-
-			case 8:
-				if field.Signed {
-					value = int64(machineEndian.Uint64(raw[field.Offset:]))
-				} else {
-					value = machineEndian.Uint64(raw[field.Offset:])
-				}
-
-			default:
+			if value, err = readInt(ptr, uint8(field.Size), field.Signed); err != nil {
 				return nil, fmt.Errorf("bad size=%d for integer field=%s", field.Size, field.Name)
 			}
 
@@ -95,6 +68,9 @@ func (f mapDecoder) Decode(raw []byte) (mapIf interface{}, err error) {
 			}
 			// (null) strings have data offset equal to string description offset
 			if len != 0 || offset != field.Offset {
+				if len > 0 && raw[offset+len-1] == 0 {
+					len--
+				}
 				value = string(raw[offset : offset+len])
 			}
 		}
@@ -244,14 +220,20 @@ func (d *structDecoder) Decode(raw []byte) (s interface{}, err error) {
 		}
 		switch dec.typ {
 		case FieldTypeInteger:
-			// copy the integer in place.
-			copy((*(*[maxIntSizeBytes]byte)(unsafe.Pointer(uptr + dec.dst)))[:dec.len], raw[dec.src:dec.src+dec.len])
+			dst := unsafe.Pointer(uptr + dec.dst)
+			src := unsafe.Pointer(&raw[dec.src])
+			if err := copyInt(dst, src, uint8(dec.len)); err != nil {
+				return nil, fmt.Errorf("bad size=%d for integer field=%s", dec.len, dec.name)
+			}
 
 		case FieldTypeString:
 			offset := uintptr(machineEndian.Uint16(raw[dec.src:]))
 			len := uintptr(machineEndian.Uint16(raw[dec.src+2:]))
 			if offset+len > n {
 				return nil, fmt.Errorf("perf event string data for field %s overflows message of size %d", dec.name, n)
+			}
+			if len > 0 && raw[offset+len-1] == 0 {
+				len--
 			}
 			*((*string)(unsafe.Pointer(uptr + dec.dst))) = string(raw[offset : offset+len])
 		}
