@@ -32,7 +32,7 @@ func BenchmarkMapDecoder(b *testing.B) {
 		Group:     "test_group",
 		Name:      "test_name",
 		Address:   "sys_connect",
-		Fetchargs: "exe=$comm fd=%di +0(%si):x8 +8(%si):u64 +16(%si):s16 +24(%si):u32",
+		Fetchargs: "exe=+0(%ax):string fd=%di +0(%si):u8 +8(%si):u64 +16(%si):s16 +24(%si):u32",
 	}
 	err := evs.AddKProbe(probe)
 	if err != nil {
@@ -75,7 +75,7 @@ func TestAddKProbeIsNotRacy(t *testing.T) {
 		Group:     "test_group",
 		Name:      "test_name",
 		Address:   "sys_connect",
-		Fetchargs: "exe=$comm fd=%di +0(%si):x64 +8(%si):u32 +16(%si):s16 +24(%si):u8",
+		Fetchargs: "fd=%di +0(%si) +8(%si) +16(%si):s16 +24(%si):u8",
 	}
 	defer func() {
 		if err := evs.RemoveAllKProbes(); err != nil {
@@ -102,7 +102,7 @@ func BenchmarkStructDecoder(b *testing.B) {
 		Group:     "test_group",
 		Name:      "test_name",
 		Address:   "sys_connect",
-		Fetchargs: "exe=$comm fd=%di +0(%si):x8 +8(%si):u64 +16(%si):s16 +24(%si):u32",
+		Fetchargs: "exe=+0(%ax):string fd=%di +0(%si):u8 +8(%si):u64 +16(%si):s16 +24(%si):u32",
 	}
 	err := evs.AddKProbe(probe)
 	if err != nil {
