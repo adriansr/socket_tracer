@@ -35,18 +35,46 @@ var (
 // PerfChannel represents a channel to receive perf events.
 type PerfChannel struct {
 	done    chan struct{}
-	sC      chan interface{}
-	eC      chan error
-	evs     []*perf.Event
+	sampleC chan interface{}
+	errC    chan error
+	lostC   chan uint64
+
+	// one perf.Event per CPU
+	evs []*perf.Event
+
 	running uintptr
 	wg      sync.WaitGroup
+
+	// Settings
+	sizeSampleC int
+	sizeErrC    int
+	sizeLostC   int
+	mappedPages int
+	pid         int
 }
+
+type PerfChannelConf func(*PerfChannel) error
 
 // NewPerfChannel creates a new perf channel in order to receive events for
 // the given probe ID.
-func NewPerfChannel(kprobeID int) (channel *PerfChannel, err error) {
+func NewPerfChannel(kprobeID int, cfg ...PerfChannelConf) (channel *PerfChannel, err error) {
 	if !perf.Supported() {
 		return nil, ErrUnsupported
+	}
+
+	// Defaults
+	channel = new(PerfChannel)
+	channel.sizeSampleC = 1024
+	channel.sizeErrC = 8
+	channel.sizeLostC = 64
+	channel.mappedPages = 1
+	channel.pid = perf.AllThreads
+
+	// Set configuration
+	for _, fun := range cfg {
+		if err := fun(channel); err != nil {
+			return nil, err
+		}
 	}
 
 	attr := new(perf.Attr)
@@ -60,18 +88,78 @@ func NewPerfChannel(kprobeID int) (channel *PerfChannel, err error) {
 		Raw: true,
 	}
 
-	evs := make([]*perf.Event, runtime.NumCPU())
-	for idx := range evs {
-		evs[idx], err = perf.Open(attr, perf.AllThreads, idx, nil)
+	channel.evs = make([]*perf.Event, runtime.NumCPU())
+	for idx := range channel.evs {
+		channel.evs[idx], err = perf.Open(attr, channel.pid, idx, nil)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	channel = new(PerfChannel)
-	channel.evs = evs
-	channel.done = make(chan struct{})
+	channel.done = make(chan struct{}, 0)
 	return channel, nil
+}
+
+func WithBufferSize(size int) PerfChannelConf {
+	return func(channel *PerfChannel) error {
+		if size < 0 {
+			return fmt.Errorf("bad size for sample channel: %d", size)
+		}
+		channel.sizeSampleC = size
+		return nil
+	}
+}
+
+func WithErrBufferSize(size int) PerfChannelConf {
+	return func(channel *PerfChannel) error {
+		if size < 0 {
+			return fmt.Errorf("bad size for err channel: %d", size)
+		}
+		channel.sizeErrC = size
+		return nil
+	}
+}
+
+func WithLostBufferSize(size int) PerfChannelConf {
+	return func(channel *PerfChannel) error {
+		if size < 0 {
+			return fmt.Errorf("bad size for lost channel: %d", size)
+		}
+		channel.sizeLostC = size
+		return nil
+	}
+}
+
+func WithRingSizeExponent(exp int) PerfChannelConf {
+	return func(channel *PerfChannel) error {
+		if exp < 0 || exp > 18 {
+			return fmt.Errorf("bad exponent for ring buffer: %d", exp)
+		}
+		channel.mappedPages = 1 << uint(exp)
+		return nil
+	}
+}
+
+func WithPID(pid int) PerfChannelConf {
+	return func(channel *PerfChannel) error {
+		if pid < -1 {
+			return fmt.Errorf("bad pid for ring buffer: %d", pid)
+		}
+		channel.pid = pid
+		return nil
+	}
+}
+
+func (c *PerfChannel) C() <-chan interface{} {
+	return c.sampleC
+}
+
+func (c *PerfChannel) ErrC() <-chan error {
+	return c.errC
+}
+
+func (c *PerfChannel) LostC() <-chan uint64 {
+	return c.lostC
 }
 
 // Run enables the configured probe and starts receiving perf events.
@@ -79,27 +167,26 @@ func NewPerfChannel(kprobeID int) (channel *PerfChannel, err error) {
 // errC is the channel where errors are received.
 //
 // The format of the received events depends on the Decoder used.
-func (c *PerfChannel) Run(decoder Decoder) (sampleC <-chan interface{}, errC <-chan error, err error) {
+func (c *PerfChannel) Run(decoder Decoder) error {
 	if !atomic.CompareAndSwapUintptr(&c.running, 0, 1) {
-		return nil, nil, ErrAlreadyRunning
+		return ErrAlreadyRunning
 	}
-	c.sC = make(chan interface{}, 4096)
-	c.eC = make(chan error, 64)
+	c.sampleC = make(chan interface{}, 4096)
+	c.errC = make(chan error, 64)
+	c.lostC = make(chan uint64, 64)
 
 	for _, ev := range c.evs {
 		if err := ev.Enable(); err != nil {
-			return nil, nil, errors.Wrap(err, "perf channel enable failed")
+			return errors.Wrap(err, "perf channel enable failed")
 		}
-		if err := ev.MapRingNumPages(128); err != nil {
-			return nil, nil, errors.Wrap(err, "perf channel mapring failed")
+		if err := ev.MapRingNumPages(c.mappedPages); err != nil {
+			return errors.Wrap(err, "perf channel mapring failed")
 		}
 		c.wg.Add(1)
 		go c.channelLoop(ev, decoder)
 	}
 
-	go statsLoop(c.done)
-
-	return c.sC, c.eC, nil
+	return nil
 }
 
 // Close closes the channel.
@@ -109,46 +196,21 @@ func (c *PerfChannel) Close() error {
 	}
 	close(c.done)
 	c.wg.Wait()
-	defer close(c.sC)
-	defer close(c.eC)
+	defer close(c.sampleC)
+	defer close(c.errC)
+	defer close(c.lostC)
 	return nil
 }
 
-var recvCount, lostCount uint64
-
-func statsLoop(done <-chan struct{}) {
-
-	lastRecv := atomic.LoadUint64(&recvCount)
-	lastLost := atomic.LoadUint64(&lostCount)
-	lastCheck := time.Now()
-
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-
-	for t := range ticker.C {
-		select {
-		case <-done:
-			return
-		default:
-		}
-
-		elapsed := t.Sub(lastCheck)
-		recv := atomic.LoadUint64(&recvCount)
-		lost := atomic.LoadUint64(&lostCount)
-
-		fmt.Fprintf(os.Stderr, "Read %d lost %d (%.01f eps / %.01f lps)\n",
-			recv, lost,
-			float64(recv-lastRecv)/elapsed.Seconds(),
-			float64(lost-lastLost)/elapsed.Seconds())
-
-		lastCheck, lastRecv, lastLost = t, recv, lost
-	}
-}
-
+// doneWrapperContext is a custom context.Context that is tailored to
+// perf.Event.ReadRawRecord needs. It's used to avoid an expensive allocation
+// before each call to ReadRawRecord while providing termination when
+// the wrapped channel closes.
 type doneWrapperContext <-chan struct{}
 
 func (ctx doneWrapperContext) Deadline() (deadline time.Time, ok bool) {
-	return time.Time{}, false
+	// No deadline
+	return deadline, false
 }
 
 func (ctx doneWrapperContext) Done() <-chan struct{} {
@@ -179,29 +241,30 @@ func (c *PerfChannel) channelLoop(ev *perf.Event, decoder Decoder) {
 		var raw perf.RawRecord
 		err := ev.ReadRawRecord(ctx, &raw)
 		if ctx.Err() != nil {
-			fmt.Fprintf(os.Stderr, "Read loop terminated\n")
-			break
+			return
 		}
 		if err != nil {
-			c.eC <- err
-			break
+			c.errC <- err
+			return
 		}
 		switch raw.Header.Type {
 		case unix.PERF_RECORD_SAMPLE:
 			output, err := decoder.Decode(raw.Data)
-			atomic.AddUint64(&recvCount, 1)
 			if err != nil {
-				c.eC <- err
+				c.errC <- err
 				continue
 			}
-			c.sC <- output
+			c.sampleC <- output
 
 		case unix.PERF_RECORD_LOST:
-			var lost uint64 = 1
+			var lost uint64
 			if len(raw.Data) >= 16 {
 				lost = machineEndian.Uint64(raw.Data[8:])
 			}
-			atomic.AddUint64(&lostCount, lost)
+			c.lostC <- lost
+
+		default:
+			fmt.Fprintf(os.Stderr, "XXX got unknown event of type %x\n", raw.Header.Type)
 		}
 	}
 }
