@@ -278,9 +278,6 @@ func (c *PerfChannel) channelLoop(ev *perf.Event, decoder Decoder) {
 				lost = machineEndian.Uint64(raw.Data[8:])
 			}
 			c.lostC <- lost
-
-		default:
-			fmt.Fprintf(os.Stderr, "XXX got unknown event of type %x\n", raw.Header.Type)
 		}
 	}
 }

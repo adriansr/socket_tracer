@@ -6,11 +6,8 @@ import (
 	"os"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
 	"github.com/acln0/perf"
-	"golang.org/x/sys/unix"
-
 	tracing "github.com/adriansr/socket_tracer"
 )
 
@@ -46,13 +43,7 @@ func statsLoop(done <-chan struct{}) {
 }
 
 func main() {
-
-	fmt.Fprintf(os.Stderr, "Size of event mmap page=%d system page=%d\n",
-		unsafe.Sizeof(unix.PerfEventMmapPage{}), unix.Getpagesize())
 	evs := tracing.NewEventTracing(tracing.DefaultDebugFSPath)
-	//if err := evs.RemoveAllKProbes(); err != nil {
-	//	panic(err)
-	//}
 	probe := tracing.KProbe{
 		Name:      "test_kprobe",
 		Address:   "sys_open",
