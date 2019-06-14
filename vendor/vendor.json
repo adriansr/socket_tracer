@@ -3,16 +3,19 @@
 	"ignore": "test",
 	"package": [
 		{
-			"checksumSHA1": "fyxTkn6ptjdSb9d1a/Z1Uw68VlU=",
-			"path": "acln.ro/perf",
-			"revision": "09a56b85c2ce7ab53fa5f91e69c1297aef7011a2",
-			"revisionTime": "2019-03-19T05:05:49Z"
+			"checksumSHA1": "VfPlDdQD/2MK18cDL84JBGViHrk=",
+			"origin": "github.com/adriansr/perf",
+			"path": "github.com/acln0/perf",
+			"revision": "341ac262f783b3ff4bb791bffc72298e825948ae",
+			"revisionTime": "2019-06-14T14:39:18Z",
+			"version": "fix3.13",
+			"versionExact": "fix3.13"
 		},
 		{
-			"checksumSHA1": "ACZk9yzaxKrTUUEy4IS9Lb0+dqc=",
+			"checksumSHA1": "8gJjRi/3ZyVZlVp0YEjUm/+aLSU=",
 			"path": "golang.org/x/sys/unix",
-			"revision": "adf421d2caf4ffcf74142ff5fb9ee323b21a819e",
-			"revisionTime": "2019-05-25T16:31:25Z"
+			"revision": "d442b75600c5d6484576502b3c53a55c54311be9",
+			"revisionTime": "2019-06-14T02:10:50Z"
 		}
 	],
 	"rootPath": "github.com/adriansr/socket_tracer"
