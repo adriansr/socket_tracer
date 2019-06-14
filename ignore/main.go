@@ -8,9 +8,10 @@ import (
 	"time"
 	"unsafe"
 
-	"acln.ro/perf"
-	tracing "github.com/adriansr/socket_tracer"
+	"github.com/acln0/perf"
 	"golang.org/x/sys/unix"
+
+	tracing "github.com/adriansr/socket_tracer"
 )
 
 var recvCount, lostCount uint64
@@ -49,9 +50,9 @@ func main() {
 	fmt.Fprintf(os.Stderr, "Size of event mmap page=%d system page=%d\n",
 		unsafe.Sizeof(unix.PerfEventMmapPage{}), unix.Getpagesize())
 	evs := tracing.NewEventTracing(tracing.DefaultDebugFSPath)
-	if err := evs.RemoveAllKProbes(); err != nil {
-		panic(err)
-	}
+	//if err := evs.RemoveAllKProbes(); err != nil {
+	//	panic(err)
+	//}
 	probe := tracing.KProbe{
 		Name:      "test_kprobe",
 		Address:   "sys_open",
@@ -61,6 +62,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	defer evs.RemoveKProbe(probe)
 	desc, err := evs.LoadKProbeFormat(probe)
 	if err != nil {
 		panic(err)

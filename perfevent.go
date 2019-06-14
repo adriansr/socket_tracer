@@ -13,7 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"acln.ro/perf"
+	"github.com/acln0/perf"
 	"github.com/pkg/errors"
 	"golang.org/x/sys/unix"
 )
@@ -89,10 +89,26 @@ func NewPerfChannel(kprobeID int, cfg ...PerfChannelConf) (channel *PerfChannel,
 	}
 
 	channel.evs = make([]*perf.Event, runtime.NumCPU())
+
+	flags := unix.PERF_FLAG_FD_CLOEXEC
 	for idx := range channel.evs {
-		channel.evs[idx], err = perf.Open(attr, channel.pid, idx, nil)
+		channel.evs[idx], err = perf.OpenWithFlags(attr, channel.pid, idx, nil, flags)
 		if err != nil {
-			return nil, err
+			if sysErr, ok := err.(*os.SyscallError); ok && sysErr.Err == unix.EINVAL && flags != 0 {
+				flags = 0
+				channel.evs[idx], err = perf.OpenWithFlags(attr, channel.pid, idx, nil, flags)
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
+		if flags == 0 {
+			fd, err := channel.evs[idx].FD()
+			if err != nil {
+				return nil, err
+			}
+			// Warn: no error checking possible
+			unix.CloseOnExec(fd)
 		}
 	}
 
