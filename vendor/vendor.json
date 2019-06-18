@@ -1,0 +1,13 @@
+{
+	"comment": "",
+	"ignore": "test",
+	"package": [
+		{
+			"checksumSHA1": "T12uSKTjWMagbOOWAPO7JnfqQss=",
+			"path": "golang.org/x/sys/unix",
+			"revision": "516e3c20635fbe39539f7ed361a15c51fec29cd8",
+			"revisionTime": "2019-06-18T10:54:32Z"
+		}
+	],
+	"rootPath": "github.com/adriansr/socket_tracer"
+}
