@@ -189,7 +189,7 @@ var integerTypes = map[string]uint8{
 	"int":   4,
 	"s32":   4,
 	"u32":   4,
-	"long":  8,
+	"long":  strconv.IntSize / 8,
 	"s64":   8,
 	"u64":   8,
 }

@@ -13,11 +13,12 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/stretchr/testify/assert"
 )
 
-var rawMsg = []byte{
+var rawMsg64 = []byte{
 	0x44, 0x00, 0x00, 0x00, 0x9b, 0x05, 0x00, 0x00, 0xae, 0x0e, 0x00, 0x00,
 	0xa0, 0x52, 0x23, 0xad, 0xff, 0xff, 0xff, 0xff, 0x3c, 0x00, 0x04, 0x00,
 	0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -26,13 +27,35 @@ var rawMsg = []byte{
 	0xc8, 0x99, 0xc4, 0x25, 0x73, 0x73, 0x68, 0x64, 0x00, 0x00, 0x00, 0x00,
 }
 
+var rawMsg32 = []byte{
+	0x40, 0x00, 0x00, 0x00, 0x9b, 0x05, 0x00, 0x00, 0xae, 0x0e, 0x00, 0x00,
+	0xa0, 0x52, 0x23, 0xad, 0x3c, 0x00, 0x04, 0x00, 0x03, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x01, 0x7d, 0x56, 0xe6, 0x62, 0xc8, 0x99, 0xc4, 0x25,
+	0x73, 0x73, 0x68, 0x64, 0x00, 0x00, 0x00, 0x00,
+}
+
+var rawMsg = initRaw()
+
+func initRaw() []byte {
+	switch v := unsafe.Sizeof(uintptr(0)); v {
+	case 4:
+		return rawMsg32
+	case 8:
+		return rawMsg64
+	default:
+		panic(v)
+	}
+}
+
 func BenchmarkMapDecoder(b *testing.B) {
 	evs := NewEventTracing(DefaultDebugFSPath)
 	probe := Probe{
 		Group:     "test_group",
 		Name:      "test_name",
 		Address:   "sys_connect",
-		Fetchargs: "exe=+0(%ax):string fd=%di +0(%si):u8 +8(%si):u64 +16(%si):s16 +24(%si):u32",
+		Fetchargs: "exe=+0(%ax):string fd=%di:u64 +0(%si):u8 +8(%si):u64 +16(%si):s16 +24(%si):u32",
 	}
 	err := evs.AddKProbe(probe)
 	if err != nil {
@@ -102,7 +125,7 @@ func BenchmarkStructDecoder(b *testing.B) {
 		Group:     "test_group",
 		Name:      "test_name",
 		Address:   "sys_connect",
-		Fetchargs: "exe=+0(%ax):string fd=%di +0(%si):u8 +8(%si):u64 +16(%si):s16 +24(%si):u32",
+		Fetchargs: "exe=+0(%ax):string fd=%di:u64 +0(%si):u8 +8(%si):u64 +16(%si):s16 +24(%si):u32",
 	}
 	err := evs.AddKProbe(probe)
 	if err != nil {
@@ -114,17 +137,17 @@ func BenchmarkStructDecoder(b *testing.B) {
 	}
 
 	type myStruct struct {
-		Type   uint16 `kprobe:"common_type"`
-		Flags  uint8  `kprobe:"common_flags"`
-		PCount uint8  `kprobe:"common_preempt_count"`
-		PID    uint32 `kprobe:"common_pid"`
-		IP     uint64 `kprobe:"__probe_ip"`
-		Exe    string `kprobe:"exe"`
-		Fd     uint64 `kprobe:"fd"`
-		Arg3   uint8  `kprobe:"arg3"`
-		Arg4   uint64 `kprobe:"arg4"`
-		Arg5   uint16 `kprobe:"arg5"`
-		Arg6   uint32 `kprobe:"arg6"`
+		Type   uint16  `kprobe:"common_type"`
+		Flags  uint8   `kprobe:"common_flags"`
+		PCount uint8   `kprobe:"common_preempt_count"`
+		PID    uint32  `kprobe:"common_pid"`
+		IP     uintptr `kprobe:"__probe_ip"`
+		Exe    string  `kprobe:"exe"`
+		Fd     uint64  `kprobe:"fd"`
+		Arg3   uint8   `kprobe:"arg3"`
+		Arg4   uint64  `kprobe:"arg4"`
+		Arg5   uint16  `kprobe:"arg5"`
+		Arg6   uint32  `kprobe:"arg6"`
 	}
 	var myAlloc AllocateFn = func() interface{} {
 		return new(myStruct)

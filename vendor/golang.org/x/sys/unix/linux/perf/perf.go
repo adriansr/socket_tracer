@@ -518,8 +518,8 @@ func (ev *Event) ioctlInt(number int, arg uintptr) error {
 	return nil
 }
 
-func (ev *Event) ioctlPointer(number int, arg unsafe.Pointer) error {
-	_, _, e := unix.Syscall(unix.SYS_IOCTL, uintptr(ev.perffd), uintptr(number), uintptr(arg))
+func (ev *Event) ioctlPointer(number uintptr, arg unsafe.Pointer) error {
+	_, _, e := unix.Syscall(unix.SYS_IOCTL, uintptr(ev.perffd), number, uintptr(arg))
 	if e != 0 {
 		return e
 	}
