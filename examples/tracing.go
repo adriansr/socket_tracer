@@ -7,7 +7,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/acln0/perf"
+	"golang.org/x/sys/unix/linux/perf"
+
 	tracing "github.com/adriansr/socket_tracer"
 )
 

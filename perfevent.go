@@ -7,15 +7,14 @@ package socket_tracer
 import (
 	"context"
 	"fmt"
-	"os"
 	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/acln0/perf"
 	"github.com/pkg/errors"
 	"golang.org/x/sys/unix"
+	"golang.org/x/sys/unix/linux/perf"
 )
 
 var (
@@ -90,25 +89,10 @@ func NewPerfChannel(kprobeID int, cfg ...PerfChannelConf) (channel *PerfChannel,
 
 	channel.evs = make([]*perf.Event, runtime.NumCPU())
 
-	flags := unix.PERF_FLAG_FD_CLOEXEC
 	for idx := range channel.evs {
-		channel.evs[idx], err = perf.OpenWithFlags(attr, channel.pid, idx, nil, flags)
+		channel.evs[idx], err = perf.Open(attr, channel.pid, idx, nil)
 		if err != nil {
-			if sysErr, ok := err.(*os.SyscallError); ok && sysErr.Err == unix.EINVAL && (flags&unix.PERF_FLAG_FD_CLOEXEC) != 0 {
-				flags &= ^unix.PERF_FLAG_FD_CLOEXEC
-				channel.evs[idx], err = perf.OpenWithFlags(attr, channel.pid, idx, nil, flags)
-			}
-			if err != nil {
-				return nil, err
-			}
-		}
-		if flags == 0 {
-			fd, err := channel.evs[idx].FD()
-			if err != nil {
-				return nil, err
-			}
-			// Warn: no error checking possible
-			unix.CloseOnExec(fd)
+			return nil, err
 		}
 	}
 
