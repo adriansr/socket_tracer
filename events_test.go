@@ -28,7 +28,7 @@ var rawMsg = []byte{
 
 func BenchmarkMapDecoder(b *testing.B) {
 	evs := NewEventTracing(DefaultDebugFSPath)
-	probe := KProbe{
+	probe := Probe{
 		Group:     "test_group",
 		Name:      "test_name",
 		Address:   "sys_connect",
@@ -38,7 +38,7 @@ func BenchmarkMapDecoder(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	desc, err := evs.LoadKProbeFormat(probe)
+	desc, err := evs.LoadProbeFormat(probe)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func BenchmarkMapDecoder(b *testing.B) {
 // can be called immediately after AddKProbe.
 func TestAddKProbeIsNotRacy(t *testing.T) {
 	evs := NewEventTracing(DefaultDebugFSPath)
-	probe := KProbe{
+	probe := Probe{
 		Group:     "test_group",
 		Name:      "test_name",
 		Address:   "sys_connect",
@@ -86,7 +86,7 @@ func TestAddKProbeIsNotRacy(t *testing.T) {
 		if err := evs.AddKProbe(probe); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := evs.LoadKProbeFormat(probe); err != nil {
+		if _, err := evs.LoadProbeFormat(probe); err != nil {
 			t.Fatal(err)
 		}
 		if err := evs.RemoveKProbe(probe); err != nil {
@@ -98,7 +98,7 @@ func TestAddKProbeIsNotRacy(t *testing.T) {
 func BenchmarkStructDecoder(b *testing.B) {
 
 	evs := NewEventTracing(DefaultDebugFSPath)
-	probe := KProbe{
+	probe := Probe{
 		Group:     "test_group",
 		Name:      "test_name",
 		Address:   "sys_connect",
@@ -108,7 +108,7 @@ func BenchmarkStructDecoder(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	desc, err := evs.LoadKProbeFormat(probe)
+	desc, err := evs.LoadProbeFormat(probe)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -159,10 +159,10 @@ func BenchmarkStructDecoder(b *testing.B) {
 
 func TestKProbeReal(t *testing.T) {
 	// Skipped ...
-	//t.SkipNow()
+	t.SkipNow()
 
 	evs := NewEventTracing(DefaultDebugFSPath)
-	listAll := func() []KProbe {
+	listAll := func() []Probe {
 		list, err := evs.ListKProbes()
 		if err != nil {
 			t.Fatal(err)
@@ -178,7 +178,7 @@ func TestKProbeReal(t *testing.T) {
 			t.Fatal(err, kprobe.String())
 		}
 	}
-	err := evs.AddKProbe(KProbe{
+	err := evs.AddKProbe(Probe{
 		Name:      "myprobe",
 		Address:   "sys_connect",
 		Fetchargs: "fd=%di +0(%si) +8(%si) +16(%si) +24(%si)",
@@ -186,7 +186,7 @@ func TestKProbeReal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = evs.AddKProbe(KProbe{
+	err = evs.AddKProbe(Probe{
 		Type:      TypeKRetProbe,
 		Name:      "myretprobe",
 		Address:   "do_sys_open",
@@ -199,7 +199,7 @@ func TestKProbeReal(t *testing.T) {
 	if err := evs.RemoveAllKProbes(); err != nil {
 		t.Fatal(err)
 	}
-	probe := KProbe{
+	probe := Probe{
 		Name:    "test_kprobe",
 		Address: "sys_accept",
 		//Fetchargs: "exe=$comm fd=%di +0(%si) +8(%si) +16(%si) +24(%si) +99999(%ax):string",
@@ -209,7 +209,7 @@ func TestKProbeReal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	desc, err := evs.LoadKProbeFormat(probe)
+	desc, err := evs.LoadProbeFormat(probe)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,8 +240,7 @@ func TestKProbeReal(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sampleC, errC, err := channel.Run(decoder)
-	if err != nil {
+	if err := channel.Run(decoder); err != nil {
 		t.Fatal(err)
 	}
 
@@ -252,7 +251,7 @@ func TestKProbeReal(t *testing.T) {
 		select {
 		case <-timer.C:
 			active = false
-		case iface, ok := <-sampleC:
+		case iface, ok := <-channel.C():
 			if !ok {
 				break
 			}
@@ -270,9 +269,12 @@ func TestKProbeReal(t *testing.T) {
 				}
 				fmt.Fprintf(os.Stderr, "    raw:\n%s\n", data["_raw_"])
 			}
-		case err := <-errC:
+		case err := <-channel.ErrC():
 			t.Log("Err received from channel:", err)
 			active = false
+
+		case lost := <-channel.LostC():
+			t.Log("lost events:", lost)
 		}
 	}
 
@@ -320,7 +322,7 @@ w:future feature
 	if err != nil {
 		panic(err)
 	}
-	expected := []KProbe{
+	expected := []Probe{
 		{
 			Type:      TypeKProbe,
 			Name:      "probe_1",
@@ -370,8 +372,8 @@ w:future feature
 	}
 
 	evs := NewEventTracing(tmpDir)
-	p1 := KProbe{Group: "kprobe", Name: "myprobe", Address: "sys_open", Fetchargs: "path=+0(%di):string mode=%si"}
-	p2 := KProbe{Type: TypeKRetProbe, Name: "myretprobe", Address: "0xffffff123456", Fetchargs: "+0(%di) +8(%di) +16(%di)"}
+	p1 := Probe{Group: "kprobe", Name: "myprobe", Address: "sys_open", Fetchargs: "path=+0(%di):string mode=%si"}
+	p2 := Probe{Type: TypeKRetProbe, Name: "myretprobe", Address: "0xffffff123456", Fetchargs: "+0(%di) +8(%di) +16(%di)"}
 	assert.NoError(t, evs.AddKProbe(p1))
 	assert.NoError(t, evs.AddKProbe(p2))
 	assert.NoError(t, evs.RemoveKProbe(p1))

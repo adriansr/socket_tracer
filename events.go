@@ -26,8 +26,7 @@ var (
 
 // EventTracing is an accessor to manage event tracing via debugfs.
 type EventTracing struct {
-	basePath   string
-	eventsPath string
+	basePath string
 }
 
 func init() {
@@ -48,14 +47,26 @@ func init() {
 // Pass `DefaultDebugFSPath` to use the default path.
 func NewEventTracing(debugFSPath string) *EventTracing {
 	return &EventTracing{
-		basePath:   debugFSPath,
-		eventsPath: filepath.Join(debugFSPath, "tracing/kprobe_events"),
+		basePath: debugFSPath,
 	}
 }
 
 // ListKProbes lists the currently installed kprobes / kretprobes
-func (dfs *EventTracing) ListKProbes() (kprobes []KProbe, err error) {
-	file, err := os.Open(dfs.eventsPath)
+func (dfs *EventTracing) ListKProbes() (kprobes []Probe, err error) {
+	return dfs.listProbes(kprobeCfgFile)
+}
+
+// ListUProbes lists the currently installed uprobes / uretprobes
+func (dfs *EventTracing) ListUProbes() (uprobes []Probe, err error) {
+	return dfs.listProbes(uprobeCfgFile)
+}
+
+func (dfs *EventTracing) listProbes(filename string) (probes []Probe, err error) {
+	mapping, ok := probeFileInfo[filename]
+	if !ok {
+		return nil, fmt.Errorf("unknown probe events file: %s", filename)
+	}
+	file, err := os.Open(filepath.Join(dfs.basePath, "tracing", filename))
 	if err != nil {
 		return nil, err
 	}
@@ -64,11 +75,11 @@ func (dfs *EventTracing) ListKProbes() (kprobes []KProbe, err error) {
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		if matches := kprobeRegexp.FindStringSubmatch(scanner.Text()); len(matches) == 6 {
-			var typ KProbeType
-			if matches[1][0] == 'r' {
-				typ = TypeKRetProbe
+			typ, ok := mapping[matches[1][0]]
+			if !ok {
+				return nil, fmt.Errorf("no mapping for probe of type '%c' in file %s", matches[1][0], filename)
 			}
-			kprobes = append(kprobes, KProbe{
+			probes = append(probes, Probe{
 				Type:      typ,
 				Group:     matches[2],
 				Name:      matches[3],
@@ -77,30 +88,49 @@ func (dfs *EventTracing) ListKProbes() (kprobes []KProbe, err error) {
 			})
 		}
 	}
-	return kprobes, nil
+	return probes, nil
 }
 
 // AddKProbe installs a new kprobe/kretprobe.
-func (dfs *EventTracing) AddKProbe(probe KProbe) error {
-	return dfs.appendKProbe(probe.String())
+func (dfs *EventTracing) AddKProbe(probe Probe) error {
+	return dfs.appendProbe(kprobeCfgFile, probe.String())
 }
 
 // RemoveKProbe removes an installed kprobe/kretprobe.
-func (dfs *EventTracing) RemoveKProbe(probe KProbe) error {
-	return dfs.appendKProbe(probe.RemoveString())
+func (dfs *EventTracing) RemoveKProbe(probe Probe) error {
+	return dfs.appendProbe(kprobeCfgFile, probe.RemoveString())
 }
 
-// RemoveAllKProbes removes all installed kprobes and kretprobes.
+// AddUProbe installs a new uprobe/uretprobe.
+func (dfs *EventTracing) AddUProbe(probe Probe) error {
+	return dfs.appendProbe(uprobeCfgFile, probe.String())
+}
+
+// RemoveUProbe removes an installed uprobe/uretprobe.
+func (dfs *EventTracing) RemoveUProbe(probe Probe) error {
+	return dfs.appendProbe(uprobeCfgFile, probe.RemoveString())
+}
+
+// RemoveAllUProbes removes all installed kprobes and kretprobes.
 func (dfs *EventTracing) RemoveAllKProbes() error {
-	file, err := os.OpenFile(dfs.eventsPath, os.O_WRONLY|os.O_TRUNC|os.O_SYNC, 0)
+	return dfs.removeAllProbes(kprobeCfgFile)
+}
+
+// RemoveAllUProbes removes all installed uprobes and uretprobes.
+func (dfs *EventTracing) RemoveAllUProbes() error {
+	return dfs.removeAllProbes(uprobeCfgFile)
+}
+
+func (dfs *EventTracing) removeAllProbes(filename string) error {
+	file, err := os.OpenFile(filepath.Join(dfs.basePath, "tracing", filename), os.O_WRONLY|os.O_TRUNC|os.O_SYNC, 0)
 	if err != nil {
 		return err
 	}
 	return file.Close()
 }
 
-func (dfs *EventTracing) appendKProbe(desc string) error {
-	file, err := os.OpenFile(dfs.eventsPath, os.O_WRONLY|os.O_APPEND|os.O_SYNC, 0)
+func (dfs *EventTracing) appendProbe(filename string, desc string) error {
+	file, err := os.OpenFile(filepath.Join(dfs.basePath, "tracing", filename), os.O_WRONLY|os.O_APPEND|os.O_SYNC, 0)
 	if err != nil {
 		return err
 	}
@@ -164,10 +194,10 @@ var integerTypes = map[string]uint8{
 	"u64":   8,
 }
 
-// LoadKProbeFormat returns the format used for serialisation of the given
+// LoadProbeFormat returns the format used for serialisation of the given
 // kprobe/kretprobe into a tracing event. The probe needs to be installed
 // for the kernel to provide its format.
-func (dfs *EventTracing) LoadKProbeFormat(probe KProbe) (desc KProbeFormat, err error) {
+func (dfs *EventTracing) LoadProbeFormat(probe Probe) (desc KProbeFormat, err error) {
 	path := filepath.Join(dfs.basePath, "tracing/events", probe.EffectiveGroup(), probe.Name, "format")
 	file, err := os.Open(path)
 	if err != nil {

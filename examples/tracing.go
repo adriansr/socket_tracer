@@ -44,7 +44,7 @@ func statsLoop(done <-chan struct{}) {
 
 func main() {
 	evs := tracing.NewEventTracing(tracing.DefaultDebugFSPath)
-	probe := tracing.KProbe{
+	probe := tracing.Probe{
 		Name:      "test_kprobe",
 		Address:   "sys_open",
 		Fetchargs: "path=+0(%di):string flags=%si mode=%cx",
@@ -54,7 +54,7 @@ func main() {
 		panic(err)
 	}
 	defer evs.RemoveKProbe(probe)
-	desc, err := evs.LoadKProbeFormat(probe)
+	desc, err := evs.LoadProbeFormat(probe)
 	if err != nil {
 		panic(err)
 	}
