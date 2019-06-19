@@ -33,6 +33,11 @@ var (
 	ErrNotRunning = errors.New("channel not running")
 )
 
+type stream struct {
+	decoder Decoder
+	probeID int
+}
+
 // PerfChannel represents a channel to receive perf events.
 type PerfChannel struct {
 	done    chan struct{}
@@ -42,7 +47,7 @@ type PerfChannel struct {
 
 	// one perf.Event per CPU
 	evs     []*perf.Event
-	streams map[uint64]int
+	streams map[uint64]stream
 
 	running uintptr
 	wg      sync.WaitGroup
@@ -72,7 +77,7 @@ type Message struct {
 
 // NewPerfChannel creates a new perf channel in order to receive events for
 // the given probe ID.
-func NewPerfChannel(kprobeID int, cfg ...PerfChannelConf) (channel *PerfChannel, err error) {
+func NewPerfChannel(cfg ...PerfChannelConf) (channel *PerfChannel, err error) {
 	if !perf.Supported() {
 		return nil, ErrUnsupported
 	}
@@ -83,14 +88,19 @@ func NewPerfChannel(kprobeID int, cfg ...PerfChannelConf) (channel *PerfChannel,
 		sizeErrC:    8,
 		sizeLostC:   64,
 		mappedPages: 1,
+		done:        make(chan struct{}, 0),
+		streams:     make(map[uint64]stream),
 		pid:         perf.AllThreads,
 		attr: perf.Attr{
-			Type:   perf.TracepointEvent,
-			Config: uint64(kprobeID),
+			Type: perf.TracepointEvent,
 			SampleFormat: perf.SampleFormat{
 				// Careful, Adding more fields here changes the raw data format.
 				Raw:      true,
 				StreamID: true,
+			},
+			// ???
+			Options: perf.Options{
+				SampleIDAll: true,
 			},
 		},
 	}
@@ -103,25 +113,38 @@ func NewPerfChannel(kprobeID int, cfg ...PerfChannelConf) (channel *PerfChannel,
 			return nil, err
 		}
 	}
-
-	channel.evs = make([]*perf.Event, runtime.NumCPU())
-	channel.streams = make(map[uint64]int, runtime.NumCPU())
-
-	for idx := range channel.evs {
-		channel.evs[idx], err = perf.Open(&channel.attr, channel.pid, idx, nil)
-		if err != nil {
-			return nil, err
-		}
-		cid, err := channel.evs[idx].ID()
-		if err != nil {
-			return nil, err
-		}
-		fmt.Fprintf(os.Stderr, "Registered channel ID: %d\n", cid)
-		channel.streams[cid] = kprobeID
-	}
-
-	channel.done = make(chan struct{}, 0)
 	return channel, nil
+}
+
+func (c *PerfChannel) MonitorProbe(id int, decoder Decoder) error {
+	c.attr.Config = uint64(id)
+	doGroup := len(c.evs) > 0
+	for idx := 0; idx < runtime.NumCPU(); idx++ {
+		var group *perf.Event
+		var flags int
+		if doGroup {
+			group = c.evs[idx]
+			flags = unix.PERF_FLAG_FD_NO_GROUP | unix.PERF_FLAG_FD_OUTPUT
+		}
+		ev, err := perf.OpenWithFlags(&c.attr, c.pid, idx, group, flags)
+		if err != nil {
+			return err
+		}
+		cid, err := ev.ID()
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "Registered channel ID: %d probe: %d CPU: %d\n", cid, id, idx)
+		c.streams[cid] = stream{probeID: id, decoder: decoder}
+		c.evs = append(c.evs, ev)
+
+		if !doGroup {
+			if err := ev.MapRingNumPages(c.mappedPages); err != nil {
+				return errors.Wrap(err, "perf channel mapring failed")
+			}
+		}
+	}
+	return nil
 }
 
 func WithBufferSize(size int) PerfChannelConf {
@@ -198,7 +221,7 @@ func (c *PerfChannel) LostC() <-chan uint64 {
 // errC is the channel where errors are received.
 //
 // The format of the received events depends on the Decoder used.
-func (c *PerfChannel) Run(decoder Decoder) error {
+func (c *PerfChannel) Run() error {
 	if !atomic.CompareAndSwapUintptr(&c.running, 0, 1) {
 		return ErrAlreadyRunning
 	}
@@ -210,11 +233,10 @@ func (c *PerfChannel) Run(decoder Decoder) error {
 		if err := ev.Enable(); err != nil {
 			return errors.Wrap(err, "perf channel enable failed")
 		}
-		if err := ev.MapRingNumPages(c.mappedPages); err != nil {
-			return errors.Wrap(err, "perf channel mapring failed")
-		}
+	}
+	for nCPU := 0; nCPU < runtime.NumCPU(); nCPU++ {
 		c.wg.Add(1)
-		go c.channelLoop(ev, decoder)
+		go c.channelLoop(c.evs[nCPU])
 	}
 
 	return nil
@@ -277,7 +299,7 @@ func (c *PerfChannel) decodeHeader(raw []byte, msg *Message) error {
 		nRead += 8
 	}
 	msg.meta.StreamID = machineEndian.Uint64(raw[nRead:])
-	msg.meta.EventID = c.streams[msg.meta.StreamID]
+	msg.meta.EventID = c.streams[msg.meta.StreamID].probeID
 	nRead += 8
 	payloadLen := int(machineEndian.Uint32(raw[nRead:]))
 	nRead += 4
@@ -288,7 +310,7 @@ func (c *PerfChannel) decodeHeader(raw []byte, msg *Message) error {
 	return nil
 }
 
-func (c *PerfChannel) channelLoop(ev *perf.Event, decoder Decoder) {
+func (c *PerfChannel) channelLoop(ev *perf.Event) {
 	defer c.wg.Done()
 	defer ev.Close()
 	defer ev.Disable()
@@ -311,6 +333,11 @@ func (c *PerfChannel) channelLoop(ev *perf.Event, decoder Decoder) {
 			if err := c.decodeHeader(raw.Data, &msg); err != nil {
 				fmt.Fprintf(os.Stderr, "Read bogus message [%d bytes]:\n%s\n", len(raw.Data), hex.Dump(raw.Data))
 				c.errC <- err
+				continue
+			}
+			decoder := c.streams[msg.meta.StreamID].decoder
+			if decoder == nil {
+				c.errC <- fmt.Errorf("no decoder for stream:%d event:%d", msg.meta.StreamID, msg.meta.EventID)
 				continue
 			}
 			output, err := decoder.Decode(msg)

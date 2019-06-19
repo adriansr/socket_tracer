@@ -5,44 +5,49 @@ import (
 	"os"
 	"time"
 
+	"github.com/pkg/errors"
 	"golang.org/x/sys/unix/linux/perf"
 
 	tracing "github.com/adriansr/socket_tracer"
 )
 
+type connectEvent struct {
+	Meta tracing.Metadata `kprobe:"metadata"`
+	PID  uint32           `kprobe:"common_pid"`
+}
+type acceptEvent struct {
+	Meta tracing.Metadata `kprobe:"metadata"`
+	PID  uint32           `kprobe:"common_pid"`
+}
+
+func registerProbe(
+	probe tracing.Probe,
+	allocator tracing.AllocateFn,
+	eventTracing *tracing.EventTracing,
+	channel *tracing.PerfChannel) error {
+
+	err := eventTracing.AddKProbe(probe)
+	if err != nil {
+		return errors.Wrapf(err, "unable to register probe %s", probe.String())
+	}
+	desc, err := eventTracing.LoadProbeFormat(probe)
+	if err != nil {
+		return errors.Wrapf(err, "unable to get format of probe %s", probe.String())
+	}
+
+	decoder, err := tracing.NewStructDecoder(desc, allocator)
+	if err != nil {
+		return errors.Wrapf(err, "unable to build decoder for probe %s", probe.String())
+	}
+	if err := channel.MonitorProbe(desc.ID, decoder); err != nil {
+		return errors.Wrapf(err, "unable to monitor probe %s", probe.String())
+	}
+	return nil
+}
+
 func main() {
 	evs := tracing.NewEventTracing(tracing.DefaultDebugFSPath)
-	probe := tracing.Probe{
-		Type:    tracing.TypeKRetProbe,
-		Name:    "connect",
-		Address: "sys_connect",
-		//Fetchargs: "path=+0(%di):string flags=%si mode=%cx",
-	}
-	err := evs.AddKProbe(probe)
-	if err != nil {
-		panic(err)
-	}
-	defer evs.RemoveKProbe(probe)
-	desc, err := evs.LoadProbeFormat(probe)
-	if err != nil {
-		panic(err)
-	}
-
-	fmt.Fprintf(os.Stderr, "Installed probe %d\n", desc.ID)
-
-	type connectEvent struct {
-		Meta tracing.Metadata `kprobe:"metadata"`
-		PID  uint32           `kprobe:"common_pid"`
-	}
-	var allocFn = func() interface{} {
-		return new(connectEvent)
-	}
-	decoder, err := tracing.NewStructDecoder(desc, allocFn)
-	if err != nil {
-		panic(err)
-	}
-
-	channel, err := tracing.NewPerfChannel(desc.ID,
+	channel, err := tracing.NewPerfChannel(
 		tracing.WithBufferSize(4096),
 		tracing.WithErrBufferSize(1),
 		tracing.WithLostBufferSize(256),
@@ -52,14 +57,35 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	defer func() {
-		if err := channel.Close(); err != nil {
+
+	for _, p := range []struct {
+		probe tracing.Probe
+		alloc tracing.AllocateFn
+	}{
+		{
+			probe: tracing.Probe{
+				Type:    tracing.TypeKRetProbe,
+				Name:    "connect",
+				Address: "sys_connect",
+			},
+			alloc: func() interface{} {
+				return new(connectEvent)
+			},
+		},
+		{
+			probe: tracing.Probe{
+				Type:    tracing.TypeKRetProbe,
+				Name:    "accept",
+				Address: "sys_accept",
+			},
+			alloc: func() interface{} {
+				return new(acceptEvent)
+			},
+		},
+	} {
+		if err := registerProbe(p.probe, p.alloc, evs, channel); err != nil {
 			panic(err)
 		}
-	}()
-
-	if err := channel.Run(decoder); err != nil {
-		panic(err)
 	}
 
 	done := make(chan struct{}, 0)
@@ -69,6 +95,10 @@ func main() {
 		output: make(chan string, 1024),
 	}
 	go st.Run(time.Second/4, done)
+
+	if err := channel.Run(); err != nil {
+		panic(err)
+	}
 
 	var t TimeReference
 	for active := true; active; {
@@ -81,6 +111,8 @@ func main() {
 			switch v := iface.(type) {
 			case *connectEvent:
 				st.Output(fmt.Sprintf("%v pid=%d [%d] connect()", t.ToTime(v.Meta.Timestamp).Format(time.RFC3339Nano), v.PID, v.Meta.EventID))
+			case *acceptEvent:
+				st.Output(fmt.Sprintf("%v pid=%d [%d] accept()", t.ToTime(v.Meta.Timestamp).Format(time.RFC3339Nano), v.PID, v.Meta.EventID))
 			}
 
 		case err := <-channel.ErrC():
