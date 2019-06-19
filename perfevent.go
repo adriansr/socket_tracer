@@ -98,10 +98,6 @@ func NewPerfChannel(cfg ...PerfChannelConf) (channel *PerfChannel, err error) {
 				Raw:      true,
 				StreamID: true,
 			},
-			// ???
-			Options: perf.Options{
-				SampleIDAll: true,
-			},
 		},
 	}
 	channel.attr.SetSamplePeriod(1)
