@@ -6,7 +6,9 @@ package socket_tracer
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
+	"os"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -45,14 +47,25 @@ type PerfChannel struct {
 	wg      sync.WaitGroup
 
 	// Settings
+	attr        perf.Attr
 	sizeSampleC int
 	sizeErrC    int
 	sizeLostC   int
 	mappedPages int
 	pid         int
+	withTime    bool
 }
 
 type PerfChannelConf func(*PerfChannel) error
+
+type Meta struct {
+	Timestamp uint64
+}
+
+type Message struct {
+	meta    Meta
+	payload []byte
+}
 
 // NewPerfChannel creates a new perf channel in order to receive events for
 // the given probe ID.
@@ -62,12 +75,24 @@ func NewPerfChannel(kprobeID int, cfg ...PerfChannelConf) (channel *PerfChannel,
 	}
 
 	// Defaults
-	channel = new(PerfChannel)
-	channel.sizeSampleC = 1024
-	channel.sizeErrC = 8
-	channel.sizeLostC = 64
-	channel.mappedPages = 1
-	channel.pid = perf.AllThreads
+	channel = &PerfChannel{
+		sizeSampleC: 1024,
+		sizeErrC:    8,
+		sizeLostC:   64,
+		mappedPages: 1,
+		pid:         perf.AllThreads,
+		attr: perf.Attr{
+			Type:   perf.TracepointEvent,
+			Config: uint64(kprobeID),
+			SampleFormat: perf.SampleFormat{
+				// Careful, Adding more fields here changes the raw data format.
+				Raw: true,
+				//StreamID: true,
+			},
+		},
+	}
+	channel.attr.SetSamplePeriod(1)
+	channel.attr.SetWakeupEvents(1)
 
 	// Set configuration
 	for _, fun := range cfg {
@@ -76,24 +101,15 @@ func NewPerfChannel(kprobeID int, cfg ...PerfChannelConf) (channel *PerfChannel,
 		}
 	}
 
-	attr := new(perf.Attr)
-	attr.Type = perf.TracepointEvent
-	attr.SetSamplePeriod(1)
-	attr.SetWakeupEvents(1)
-	attr.Config = uint64(kprobeID)
-	attr.SampleFormat = perf.SampleFormat{
-		// Careful, Adding more fields here changes the raw data format.
-		// Time: true,
-		Raw: true,
-	}
-
 	channel.evs = make([]*perf.Event, runtime.NumCPU())
 
 	for idx := range channel.evs {
-		channel.evs[idx], err = perf.Open(attr, channel.pid, idx, nil)
+		channel.evs[idx], err = perf.Open(&channel.attr, channel.pid, idx, nil)
 		if err != nil {
 			return nil, err
 		}
+		cid, err := channel.evs[idx].ID()
+		fmt.Fprintf(os.Stderr, "Registered channel ID: %d %v\n", cid, err)
 	}
 
 	channel.done = make(chan struct{}, 0)
@@ -146,6 +162,13 @@ func WithPID(pid int) PerfChannelConf {
 			return fmt.Errorf("bad pid for ring buffer: %d", pid)
 		}
 		channel.pid = pid
+		return nil
+	}
+}
+
+func WithTimestamp() PerfChannelConf {
+	return func(channel *PerfChannel) error {
+		channel.attr.SampleFormat.Time = true
 		return nil
 	}
 }
@@ -230,6 +253,30 @@ func (ctx doneWrapperContext) Value(key interface{}) interface{} {
 	return nil
 }
 
+var errMsgTooSmall = errors.New("perf event too small to parse")
+
+func (c *PerfChannel) decodeHeader(raw []byte, msg *Message) error {
+	if len(raw) < 4 {
+		return errMsgTooSmall
+	}
+	nRead := 0
+	// Read timestamp if configured
+	if c.attr.SampleFormat.Time {
+		if len(raw) < 8 {
+			return errMsgTooSmall
+		}
+		msg.meta.Timestamp = machineEndian.Uint64(raw)
+		nRead += 8
+	}
+	payloadLen := int(machineEndian.Uint32(raw[nRead:]))
+	nRead += 4
+	if len(raw) < payloadLen+nRead {
+		return fmt.Errorf("perf event truncated. Expected %d got %d", payloadLen+nRead, len(raw))
+	}
+	msg.payload = raw[nRead : nRead+payloadLen]
+	return nil
+}
+
 func (c *PerfChannel) channelLoop(ev *perf.Event, decoder Decoder) {
 	defer c.wg.Done()
 	defer ev.Close()
@@ -237,6 +284,7 @@ func (c *PerfChannel) channelLoop(ev *perf.Event, decoder Decoder) {
 
 	ctx := doneWrapperContext(c.done)
 
+	var msg Message
 	for {
 		var raw perf.RawRecord
 		err := ev.ReadRawRecord(ctx, &raw)
@@ -249,7 +297,12 @@ func (c *PerfChannel) channelLoop(ev *perf.Event, decoder Decoder) {
 		}
 		switch raw.Header.Type {
 		case unix.PERF_RECORD_SAMPLE:
-			output, err := decoder.Decode(raw.Data)
+			if err := c.decodeHeader(raw.Data, &msg); err != nil {
+				fmt.Fprintf(os.Stderr, "Read bogus message [%d bytes]:\n%s\n", len(raw.Data), hex.Dump(raw.Data))
+				c.errC <- err
+				continue
+			}
+			output, err := decoder.Decode(msg)
 			if err != nil {
 				c.errC <- err
 				continue

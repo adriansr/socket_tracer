@@ -148,6 +148,9 @@ const (
 
 	// FieldTypeString describes a string field.
 	FieldTypeString
+
+	// FieldTypeMeta describes the metadata.
+	FieldTypeMeta
 )
 
 // Field describes a field returned by a event tracing probe.

@@ -5,7 +5,6 @@
 package socket_tracer
 
 import (
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"reflect"
@@ -15,7 +14,7 @@ import (
 
 // Decoder decodes a raw event into an usable type.
 type Decoder interface {
-	Decode([]byte) (interface{}, error)
+	Decode(Message) (interface{}, error)
 }
 
 type mapDecoder []Field
@@ -39,15 +38,11 @@ func NewMapDecoder(format KProbeFormat) Decoder {
 	return mapDecoder(fields)
 }
 
-func (f mapDecoder) Decode(raw []byte) (mapIf interface{}, err error) {
-	if raw, err = getPayload(raw); err != nil {
-		return nil, err
-	}
+func (f mapDecoder) Decode(msg Message) (mapIf interface{}, err error) {
+	raw := msg.payload
 	n := len(raw)
-	m := make(map[string]interface{}, len(f))
-	if false {
-		m["_raw_"] = hex.Dump(raw)
-	}
+	m := make(map[string]interface{}, len(f)+1)
+	m["meta"] = msg.meta
 	for _, field := range f {
 		if field.Offset+field.Size > n {
 			return nil, fmt.Errorf("perf event field %s overflows message of size %d", field.Name, n)
@@ -161,6 +156,19 @@ func NewStructDecoder(desc KProbeFormat, allocFn AllocateFn) (Decoder, error) {
 			// Untagged field
 			continue
 		}
+		if name == "metadata" {
+			if outField.Type != reflect.TypeOf(Meta{}) {
+				return nil, errors.New("bad type for meta field")
+			}
+			dec.fields = append(dec.fields, fieldDecoder{
+				name: name,
+				typ:  FieldTypeMeta,
+				dst:  outField.Offset,
+				len:  outField.Type.Size(),
+			})
+			continue
+		}
+
 		inField, found := desc.Fields[name]
 		if !found {
 			return nil, fmt.Errorf("field '%s' not found in kprobe format description", name)
@@ -204,10 +212,8 @@ func NewStructDecoder(desc KProbeFormat, allocFn AllocateFn) (Decoder, error) {
 	return dec, nil
 }
 
-func (d *structDecoder) Decode(raw []byte) (s interface{}, err error) {
-	if raw, err = getPayload(raw); err != nil {
-		return nil, err
-	}
+func (d *structDecoder) Decode(msg Message) (s interface{}, err error) {
+	raw := msg.payload
 	n := uintptr(len(raw))
 
 	// Allocate a new struct to fill
@@ -238,19 +244,12 @@ func (d *structDecoder) Decode(raw []byte) (s interface{}, err error) {
 				len--
 			}
 			*((*string)(unsafe.Pointer(uptr + dec.dst))) = string(raw[offset : offset+len])
+
+		case FieldTypeMeta:
+			copy((*[1024]byte)(unsafe.Pointer(uptr + dec.dst))[:], (*[1024]byte)(unsafe.Pointer(&msg.meta))[:dec.len])
 		}
+
 	}
 
 	return s, nil
-}
-
-func getPayload(raw []byte) ([]byte, error) {
-	if len(raw) < 4 {
-		return nil, errors.New("perf event to small to parse")
-	}
-	n := int(machineEndian.Uint32(raw))
-	if len(raw) < n+4 {
-		return nil, fmt.Errorf("perf event truncated. Expected %d got %d", n+4, len(raw))
-	}
-	return raw[4 : 4+n], nil
 }
