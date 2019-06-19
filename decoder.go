@@ -157,7 +157,7 @@ func NewStructDecoder(desc KProbeFormat, allocFn AllocateFn) (Decoder, error) {
 			continue
 		}
 		if name == "metadata" {
-			if outField.Type != reflect.TypeOf(Meta{}) {
+			if outField.Type != reflect.TypeOf(Metadata{}) {
 				return nil, errors.New("bad type for meta field")
 			}
 			dec.fields = append(dec.fields, fieldDecoder{

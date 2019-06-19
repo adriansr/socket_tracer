@@ -31,8 +31,8 @@ func main() {
 	fmt.Fprintf(os.Stderr, "Installed probe %d\n", desc.ID)
 
 	type connectEvent struct {
-		Meta tracing.Meta `kprobe:"metadata"`
-		PID  uint32       `kprobe:"common_pid"`
+		Meta tracing.Metadata `kprobe:"metadata"`
+		PID  uint32           `kprobe:"common_pid"`
 	}
 	var allocFn = func() interface{} {
 		return new(connectEvent)
@@ -80,7 +80,7 @@ func main() {
 			st.Received()
 			switch v := iface.(type) {
 			case *connectEvent:
-				st.Output(fmt.Sprintf("%v pid=%d connect()", t.ToTime(v.Meta.Timestamp).Format(time.RFC3339Nano), v.PID))
+				st.Output(fmt.Sprintf("%v pid=%d [%d] connect()", t.ToTime(v.Meta.Timestamp).Format(time.RFC3339Nano), v.PID, v.Meta.EventID))
 			}
 
 		case err := <-channel.ErrC():

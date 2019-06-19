@@ -41,7 +41,8 @@ type PerfChannel struct {
 	lostC   chan uint64
 
 	// one perf.Event per CPU
-	evs []*perf.Event
+	evs     []*perf.Event
+	streams map[uint64]int
 
 	running uintptr
 	wg      sync.WaitGroup
@@ -58,12 +59,14 @@ type PerfChannel struct {
 
 type PerfChannelConf func(*PerfChannel) error
 
-type Meta struct {
+type Metadata struct {
+	StreamID  uint64
+	EventID   int
 	Timestamp uint64
 }
 
 type Message struct {
-	meta    Meta
+	meta    Metadata
 	payload []byte
 }
 
@@ -86,8 +89,8 @@ func NewPerfChannel(kprobeID int, cfg ...PerfChannelConf) (channel *PerfChannel,
 			Config: uint64(kprobeID),
 			SampleFormat: perf.SampleFormat{
 				// Careful, Adding more fields here changes the raw data format.
-				Raw: true,
-				//StreamID: true,
+				Raw:      true,
+				StreamID: true,
 			},
 		},
 	}
@@ -102,6 +105,7 @@ func NewPerfChannel(kprobeID int, cfg ...PerfChannelConf) (channel *PerfChannel,
 	}
 
 	channel.evs = make([]*perf.Event, runtime.NumCPU())
+	channel.streams = make(map[uint64]int, runtime.NumCPU())
 
 	for idx := range channel.evs {
 		channel.evs[idx], err = perf.Open(&channel.attr, channel.pid, idx, nil)
@@ -109,7 +113,11 @@ func NewPerfChannel(kprobeID int, cfg ...PerfChannelConf) (channel *PerfChannel,
 			return nil, err
 		}
 		cid, err := channel.evs[idx].ID()
-		fmt.Fprintf(os.Stderr, "Registered channel ID: %d %v\n", cid, err)
+		if err != nil {
+			return nil, err
+		}
+		fmt.Fprintf(os.Stderr, "Registered channel ID: %d\n", cid)
+		channel.streams[cid] = kprobeID
 	}
 
 	channel.done = make(chan struct{}, 0)
@@ -268,6 +276,9 @@ func (c *PerfChannel) decodeHeader(raw []byte, msg *Message) error {
 		msg.meta.Timestamp = machineEndian.Uint64(raw)
 		nRead += 8
 	}
+	msg.meta.StreamID = machineEndian.Uint64(raw[nRead:])
+	msg.meta.EventID = c.streams[msg.meta.StreamID]
+	nRead += 8
 	payloadLen := int(machineEndian.Uint32(raw[nRead:]))
 	nRead += 4
 	if len(raw) < payloadLen+nRead {

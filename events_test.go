@@ -139,18 +139,18 @@ func BenchmarkStructDecoder(b *testing.B) {
 	}
 
 	type myStruct struct {
-		Meta   Meta    `kprobe:"metadata"`
-		Type   uint16  `kprobe:"common_type"`
-		Flags  uint8   `kprobe:"common_flags"`
-		PCount uint8   `kprobe:"common_preempt_count"`
-		PID    uint32  `kprobe:"common_pid"`
-		IP     uintptr `kprobe:"__probe_ip"`
-		Exe    string  `kprobe:"exe"`
-		Fd     uint64  `kprobe:"fd"`
-		Arg3   uint8   `kprobe:"arg3"`
-		Arg4   uint64  `kprobe:"arg4"`
-		Arg5   uint16  `kprobe:"arg5"`
-		Arg6   uint32  `kprobe:"arg6"`
+		Meta   Metadata `kprobe:"metadata"`
+		Type   uint16   `kprobe:"common_type"`
+		Flags  uint8    `kprobe:"common_flags"`
+		PCount uint8    `kprobe:"common_preempt_count"`
+		PID    uint32   `kprobe:"common_pid"`
+		IP     uintptr  `kprobe:"__probe_ip"`
+		Exe    string   `kprobe:"exe"`
+		Fd     uint64   `kprobe:"fd"`
+		Arg3   uint8    `kprobe:"arg3"`
+		Arg4   uint64   `kprobe:"arg4"`
+		Arg5   uint16   `kprobe:"arg5"`
+		Arg6   uint32   `kprobe:"arg6"`
 	}
 	var myAlloc AllocateFn = func() interface{} {
 		return new(myStruct)
