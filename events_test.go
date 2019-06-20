@@ -50,7 +50,7 @@ func initRaw() []byte {
 }
 
 func BenchmarkMapDecoder(b *testing.B) {
-	evs := NewEventTracing(DefaultDebugFSPath)
+	evs := NewDebugFS()
 	probe := Probe{
 		Name:      "test_name",
 		Address:   "sys_connect",
@@ -95,7 +95,7 @@ func BenchmarkMapDecoder(b *testing.B) {
 // is added and its 'format' file is available, that is, LoadKProbeDescription
 // can be called immediately after AddKProbe.
 func TestAddKProbeIsNotRacy(t *testing.T) {
-	evs := NewEventTracing(DefaultDebugFSPath)
+	evs := NewDebugFS()
 	probe := Probe{
 		Group:     "test_group",
 		Name:      "test_name",
@@ -122,7 +122,7 @@ func TestAddKProbeIsNotRacy(t *testing.T) {
 
 func BenchmarkStructDecoder(b *testing.B) {
 
-	evs := NewEventTracing(DefaultDebugFSPath)
+	evs := NewDebugFS()
 	probe := Probe{
 		Group:     "test_group",
 		Name:      "test_name",
@@ -190,7 +190,7 @@ func TestKProbeReal(t *testing.T) {
 	// Skipped ...
 	t.SkipNow()
 
-	evs := NewEventTracing(DefaultDebugFSPath)
+	evs := NewDebugFS()
 	listAll := func() []Probe {
 		list, err := evs.ListKProbes()
 		if err != nil {
@@ -264,12 +264,16 @@ func TestKProbeReal(t *testing.T) {
 		decoder = NewMapDecoder(desc)
 	}
 
-	channel, err := NewPerfChannel(desc.ID, WithTimestamp())
+	channel, err := NewPerfChannel(WithTimestamp())
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if err := channel.Run(decoder); err != nil {
+	if err := channel.MonitorProbe(desc.ID, decoder); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := channel.Run(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -345,7 +349,7 @@ w:future feature
 		t.Fatal(err)
 	}
 
-	evs := NewEventTracing(tmpDir)
+	evs := NewDebugFSWithPath(tmpDir)
 	kprobes, err := evs.ListKProbes()
 	if err != nil {
 		panic(err)
@@ -399,7 +403,7 @@ w:future feature
 		t.Fatal(err)
 	}
 
-	evs := NewEventTracing(tmpDir)
+	evs := NewDebugFSWithPath(tmpDir)
 	p1 := Probe{Group: "kprobe", Name: "myprobe", Address: "sys_open", Fetchargs: "path=+0(%di):string mode=%si"}
 	p2 := Probe{Type: TypeKRetProbe, Name: "myretprobe", Address: "0xffffff123456", Fetchargs: "+0(%di) +8(%di) +16(%di)"}
 	assert.NoError(t, evs.AddKProbe(p1))

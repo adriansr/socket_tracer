@@ -44,7 +44,7 @@ func statsLoop(done <-chan struct{}) {
 }
 
 func main() {
-	evs := tracing.NewEventTracing(tracing.DefaultDebugFSPath)
+	evs := tracing.NewDebugFS(tracing.defaultDebugFSPath)
 	probe := tracing.Probe{
 		Name:      "test_kprobe",
 		Address:   "sys_open",

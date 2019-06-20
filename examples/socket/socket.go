@@ -23,14 +23,14 @@ type acceptEvent struct {
 func registerProbe(
 	probe tracing.Probe,
 	allocator tracing.AllocateFn,
-	eventTracing *tracing.EventTracing,
+	debugFS *tracing.DebugFS,
 	channel *tracing.PerfChannel) error {
 
-	err := eventTracing.AddKProbe(probe)
+	err := debugFS.AddKProbe(probe)
 	if err != nil {
 		return errors.Wrapf(err, "unable to register probe %s", probe.String())
 	}
-	desc, err := eventTracing.LoadProbeFormat(probe)
+	desc, err := debugFS.LoadProbeFormat(probe)
 	if err != nil {
 		return errors.Wrapf(err, "unable to get format of probe %s", probe.String())
 	}
@@ -46,7 +46,7 @@ func registerProbe(
 }
 
 func main() {
-	evs := tracing.NewEventTracing(tracing.DefaultDebugFSPath)
+	debugFS := tracing.NewDebugFS()
 	channel, err := tracing.NewPerfChannel(
 		tracing.WithBufferSize(4096),
 		tracing.WithErrBufferSize(1),
@@ -83,7 +83,7 @@ func main() {
 			},
 		},
 	} {
-		if err := registerProbe(p.probe, p.alloc, evs, channel); err != nil {
+		if err := registerProbe(p.probe, p.alloc, debugFS, channel); err != nil {
 			panic(err)
 		}
 	}
