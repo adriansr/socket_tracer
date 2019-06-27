@@ -15,8 +15,8 @@ import (
 )
 
 const (
-	// DefaultDebugFSPath is the usual path where `debugfs` is mounted.
-	defaultDebugFSPath = "/sys/kernel/debug"
+	debugFSTracingPath = "/sys/kernel/debug/tracing"
+	traceFSPath        = "/sys/kernel/tracing"
 )
 
 var (
@@ -45,14 +45,19 @@ func init() {
 // NewEventTracing creates a new accessor for the event tracing feature using
 // the given path to a mounted `debugfs`.
 // Pass `DefaultDebugFSPath` to use the default path.
-func NewDebugFS() *DebugFS {
-	return NewDebugFSWithPath(defaultDebugFSPath)
+func NewDebugFS() (*DebugFS, error) {
+	ptr, err := NewDebugFSWithPath(traceFSPath)
+	if err != nil && os.IsNotExist(err) {
+		ptr, err = NewDebugFSWithPath(debugFSTracingPath)
+	}
+	return ptr, err
 }
 
-func NewDebugFSWithPath(debugFSPath string) *DebugFS {
-	return &DebugFS{
-		basePath: debugFSPath,
+func NewDebugFSWithPath(path string) (*DebugFS, error) {
+	if _, err := os.Stat(filepath.Join(path, kprobeCfgFile)); err != nil {
+		return nil, err
 	}
+	return &DebugFS{basePath: path}, nil
 }
 
 // ListKProbes lists the currently installed kprobes / kretprobes
@@ -70,7 +75,7 @@ func (dfs *DebugFS) listProbes(filename string) (probes []Probe, err error) {
 	if !ok {
 		return nil, fmt.Errorf("unknown probe events file: %s", filename)
 	}
-	file, err := os.Open(filepath.Join(dfs.basePath, "tracing", filename))
+	file, err := os.Open(filepath.Join(dfs.basePath, filename))
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +131,7 @@ func (dfs *DebugFS) RemoveAllUProbes() error {
 }
 
 func (dfs *DebugFS) removeAllProbes(filename string) error {
-	file, err := os.OpenFile(filepath.Join(dfs.basePath, "tracing", filename), os.O_WRONLY|os.O_TRUNC|os.O_SYNC, 0)
+	file, err := os.OpenFile(filepath.Join(dfs.basePath, filename), os.O_WRONLY|os.O_TRUNC|os.O_SYNC, 0)
 	if err != nil {
 		return err
 	}
@@ -134,7 +139,7 @@ func (dfs *DebugFS) removeAllProbes(filename string) error {
 }
 
 func (dfs *DebugFS) appendProbe(filename string, desc string) error {
-	file, err := os.OpenFile(filepath.Join(dfs.basePath, "tracing", filename), os.O_WRONLY|os.O_APPEND|os.O_SYNC, 0)
+	file, err := os.OpenFile(filepath.Join(dfs.basePath, filename), os.O_WRONLY|os.O_APPEND|os.O_SYNC, 0)
 	if err != nil {
 		return err
 	}
@@ -205,7 +210,7 @@ var integerTypes = map[string]uint8{
 // kprobe/kretprobe into a tracing event. The probe needs to be installed
 // for the kernel to provide its format.
 func (dfs *DebugFS) LoadProbeFormat(probe Probe) (desc KProbeFormat, err error) {
-	path := filepath.Join(dfs.basePath, "tracing/events", probe.EffectiveGroup(), probe.Name, "format")
+	path := filepath.Join(dfs.basePath, "events", probe.EffectiveGroup(), probe.Name, "format")
 	file, err := os.Open(path)
 	if err != nil {
 		return desc, err

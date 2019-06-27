@@ -44,13 +44,16 @@ func statsLoop(done <-chan struct{}) {
 }
 
 func main() {
-	evs := tracing.NewDebugFS(tracing.defaultDebugFSPath)
+	evs, err := tracing.NewDebugFS()
+	if err != nil {
+		panic(err)
+	}
 	probe := tracing.Probe{
 		Name:      "test_kprobe",
 		Address:   "sys_open",
 		Fetchargs: "path=+0(%di):string flags=%si mode=%cx",
 	}
-	err := evs.AddKProbe(probe)
+	err = evs.AddKProbe(probe)
 	if err != nil {
 		panic(err)
 	}

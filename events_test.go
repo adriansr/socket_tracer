@@ -50,13 +50,16 @@ func initRaw() []byte {
 }
 
 func BenchmarkMapDecoder(b *testing.B) {
-	evs := NewDebugFS()
+	evs, err := NewDebugFS()
+	if err != nil {
+		b.Fatal(err)
+	}
 	probe := Probe{
 		Name:      "test_name",
 		Address:   "sys_connect",
 		Fetchargs: "exe=+0(%ax):string fd=%di:u64 +0(%si):u8 +8(%si):u64 +16(%si):s16 +24(%si):u32",
 	}
-	err := evs.AddKProbe(probe)
+	err = evs.AddKProbe(probe)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -95,7 +98,10 @@ func BenchmarkMapDecoder(b *testing.B) {
 // is added and its 'format' file is available, that is, LoadKProbeDescription
 // can be called immediately after AddKProbe.
 func TestAddKProbeIsNotRacy(t *testing.T) {
-	evs := NewDebugFS()
+	evs, err := NewDebugFS()
+	if err != nil {
+		t.Fatal(err)
+	}
 	probe := Probe{
 		Group:     "test_group",
 		Name:      "test_name",
@@ -121,15 +127,17 @@ func TestAddKProbeIsNotRacy(t *testing.T) {
 }
 
 func BenchmarkStructDecoder(b *testing.B) {
-
-	evs := NewDebugFS()
+	evs, err := NewDebugFS()
+	if err != nil {
+		b.Fatal(err)
+	}
 	probe := Probe{
 		Group:     "test_group",
 		Name:      "test_name",
 		Address:   "sys_connect",
 		Fetchargs: "exe=+0(%ax):string fd=%di:u64 +0(%si):u8 +8(%si):u64 +16(%si):s16 +24(%si):u32",
 	}
-	err := evs.AddKProbe(probe)
+	err = evs.AddKProbe(probe)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -190,7 +198,10 @@ func TestKProbeReal(t *testing.T) {
 	// Skipped ...
 	t.SkipNow()
 
-	evs := NewDebugFS()
+	evs, err := NewDebugFS()
+	if err != nil {
+		t.Fatal(err)
+	}
 	listAll := func() []Probe {
 		list, err := evs.ListKProbes()
 		if err != nil {
@@ -207,7 +218,7 @@ func TestKProbeReal(t *testing.T) {
 			t.Fatal(err, kprobe.String())
 		}
 	}
-	err := evs.AddKProbe(Probe{
+	err = evs.AddKProbe(Probe{
 		Name:      "myprobe",
 		Address:   "sys_connect",
 		Fetchargs: "fd=%di +0(%si) +8(%si) +16(%si) +24(%si)",
@@ -330,10 +341,10 @@ func TestKProbeEventsList(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	if err := os.MkdirAll(filepath.Join(tmpDir, "tracing"), 0700); err != nil {
+	if err := os.MkdirAll(tmpDir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	file, err := os.Create(filepath.Join(tmpDir, "tracing", "kprobe_events"))
+	file, err := os.Create(filepath.Join(tmpDir, "kprobe_events"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -349,7 +360,10 @@ w:future feature
 		t.Fatal(err)
 	}
 
-	evs := NewDebugFSWithPath(tmpDir)
+	evs, err := NewDebugFSWithPath(tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	kprobes, err := evs.ListKProbes()
 	if err != nil {
 		panic(err)
@@ -384,10 +398,10 @@ func TestKProbeEventsAddRemoveKProbe(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	if err := os.MkdirAll(filepath.Join(tmpDir, "tracing"), 0700); err != nil {
+	if err := os.MkdirAll(tmpDir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	file, err := os.Create(filepath.Join(tmpDir, "tracing", "kprobe_events"))
+	file, err := os.Create(filepath.Join(tmpDir, "kprobe_events"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -403,7 +417,10 @@ w:future feature
 		t.Fatal(err)
 	}
 
-	evs := NewDebugFSWithPath(tmpDir)
+	evs, err := NewDebugFSWithPath(tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	p1 := Probe{Group: "kprobe", Name: "myprobe", Address: "sys_open", Fetchargs: "path=+0(%di):string mode=%si"}
 	p2 := Probe{Type: TypeKRetProbe, Name: "myretprobe", Address: "0xffffff123456", Fetchargs: "+0(%di) +8(%di) +16(%di)"}
 	assert.NoError(t, evs.AddKProbe(p1))

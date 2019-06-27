@@ -46,7 +46,10 @@ func registerProbe(
 }
 
 func main() {
-	debugFS := tracing.NewDebugFS()
+	debugFS, err := tracing.NewDebugFS()
+	if err != nil {
+		panic(err)
+	}
 	channel, err := tracing.NewPerfChannel(
 		tracing.WithBufferSize(4096),
 		tracing.WithErrBufferSize(1),
