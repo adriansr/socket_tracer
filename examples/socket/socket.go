@@ -23,7 +23,7 @@ type acceptEvent struct {
 func registerProbe(
 	probe tracing.Probe,
 	allocator tracing.AllocateFn,
-	debugFS *tracing.DebugFS,
+	debugFS *tracing.TraceFS,
 	channel *tracing.PerfChannel) error {
 
 	err := debugFS.AddKProbe(probe)
@@ -46,7 +46,7 @@ func registerProbe(
 }
 
 func main() {
-	debugFS, err := tracing.NewDebugFS()
+	debugFS, err := tracing.NewTraceFS()
 	if err != nil {
 		panic(err)
 	}

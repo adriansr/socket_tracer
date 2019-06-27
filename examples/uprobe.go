@@ -32,7 +32,7 @@ func main() {
 		Fetchargs: "strlen=+0x10(%sp)",
 	}
 	fmt.Fprintf(os.Stderr, "XXX PROBE: %s\n", uprobe.String())
-	evs, err := tracer.NewDebugFS()
+	evs, err := tracer.NewTraceFS()
 	if err != nil {
 		panic(err)
 	}

@@ -44,7 +44,7 @@ func statsLoop(done <-chan struct{}) {
 }
 
 func main() {
-	evs, err := tracing.NewDebugFS()
+	evs, err := tracing.NewTraceFS()
 	if err != nil {
 		panic(err)
 	}

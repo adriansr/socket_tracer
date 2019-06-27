@@ -50,7 +50,7 @@ func initRaw() []byte {
 }
 
 func BenchmarkMapDecoder(b *testing.B) {
-	evs, err := NewDebugFS()
+	evs, err := NewTraceFS()
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func BenchmarkMapDecoder(b *testing.B) {
 // is added and its 'format' file is available, that is, LoadKProbeDescription
 // can be called immediately after AddKProbe.
 func TestAddKProbeIsNotRacy(t *testing.T) {
-	evs, err := NewDebugFS()
+	evs, err := NewTraceFS()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,7 @@ func TestAddKProbeIsNotRacy(t *testing.T) {
 }
 
 func BenchmarkStructDecoder(b *testing.B) {
-	evs, err := NewDebugFS()
+	evs, err := NewTraceFS()
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -198,7 +198,7 @@ func TestKProbeReal(t *testing.T) {
 	// Skipped ...
 	t.SkipNow()
 
-	evs, err := NewDebugFS()
+	evs, err := NewTraceFS()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -360,7 +360,7 @@ w:future feature
 		t.Fatal(err)
 	}
 
-	evs, err := NewDebugFSWithPath(tmpDir)
+	evs, err := NewTraceFSWithPath(tmpDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -417,7 +417,7 @@ w:future feature
 		t.Fatal(err)
 	}
 
-	evs, err := NewDebugFSWithPath(tmpDir)
+	evs, err := NewTraceFSWithPath(tmpDir)
 	if err != nil {
 		t.Fatal(err)
 	}
