@@ -27,7 +27,7 @@ type mapDecoder []Field
 // uint8, uint16, uint32, uint64, or, for signed fields, their signed counterpart.
 // For string fields, the value is a string.
 // Null string fields will be the null interface.
-func NewMapDecoder(format KProbeFormat) Decoder {
+func NewMapDecoder(format ProbeDescription) Decoder {
 	fields := make([]Field, 0, len(format.Fields))
 	for _, field := range format.Fields {
 		fields = append(fields, field)
@@ -136,7 +136,7 @@ const maxIntSizeBytes = 8
 //
 // This decoder is faster than the map decoder and results in fewer allocations:
 // Only string fields need to be allocated, plus the allocation by allocFn.
-func NewStructDecoder(desc KProbeFormat, allocFn AllocateFn) (Decoder, error) {
+func NewStructDecoder(desc ProbeDescription, allocFn AllocateFn) (Decoder, error) {
 	dec := new(structDecoder)
 	dec.alloc = allocFn
 

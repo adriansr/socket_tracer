@@ -14,6 +14,8 @@ import (
 type connectEvent struct {
 	Meta tracing.Metadata `kprobe:"metadata"`
 	PID  uint32           `kprobe:"common_pid"`
+	P0   uint8            `kprobe:"p0"`
+	Path string           `kprobe:"path"`
 }
 type acceptEvent struct {
 	Meta tracing.Metadata `kprobe:"metadata"`
@@ -30,7 +32,7 @@ func registerProbe(
 	if err != nil {
 		return errors.Wrapf(err, "unable to register probe %s", probe.String())
 	}
-	desc, err := debugFS.LoadProbeFormat(probe)
+	desc, err := debugFS.LoadProbeDescription(probe)
 	if err != nil {
 		return errors.Wrapf(err, "unable to get format of probe %s", probe.String())
 	}
@@ -39,7 +41,7 @@ func registerProbe(
 	if err != nil {
 		return errors.Wrapf(err, "unable to build decoder for probe %s", probe.String())
 	}
-	if err := channel.MonitorProbe(desc.ID, decoder); err != nil {
+	if err := channel.MonitorProbe(desc, decoder); err != nil {
 		return errors.Wrapf(err, "unable to monitor probe %s", probe.String())
 	}
 	return nil
@@ -50,6 +52,10 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	if err := debugFS.RemoveAllKProbes(); err != nil {
+		panic(err)
+	}
+
 	channel, err := tracing.NewPerfChannel(
 		tracing.WithBufferSize(4096),
 		tracing.WithErrBufferSize(1),
@@ -67,9 +73,11 @@ func main() {
 	}{
 		{
 			probe: tracing.Probe{
-				Type:    tracing.TypeKRetProbe,
-				Name:    "connect",
-				Address: "sys_connect",
+				//Type:      tracing.TypeKRetProbe,
+				Name:      "connect",
+				Address:   "sys_open",
+				Fetchargs: "p0=+0(%di):u8 path=+0(%di):string",
+				Filter:    "p0!=47",
 			},
 			alloc: func() interface{} {
 				return new(connectEvent)
@@ -113,7 +121,7 @@ func main() {
 			st.Received()
 			switch v := iface.(type) {
 			case *connectEvent:
-				st.Output(fmt.Sprintf("%v pid=%d [%d] connect()", t.ToTime(v.Meta.Timestamp).Format(time.RFC3339Nano), v.PID, v.Meta.EventID))
+				st.Output(fmt.Sprintf("%v pid=%d [%d] open([%c]'%s')", t.ToTime(v.Meta.Timestamp).Format(time.RFC3339Nano), v.PID, v.Meta.EventID, v.P0, v.Path))
 			case *acceptEvent:
 				st.Output(fmt.Sprintf("%v pid=%d [%d] accept()", t.ToTime(v.Meta.Timestamp).Format(time.RFC3339Nano), v.PID, v.Meta.EventID))
 			}

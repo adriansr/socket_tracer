@@ -75,6 +75,9 @@ type Probe struct {
 	// Fetchargs is the string of arguments that will be fetched when the probe
 	// is hit.
 	Fetchargs string
+
+	// Filter is a filter expression to apply to this probe
+	Filter string
 }
 
 // String converts this probe to the textual representation expected by the Kernel.

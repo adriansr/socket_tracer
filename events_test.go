@@ -63,7 +63,7 @@ func BenchmarkMapDecoder(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	desc, err := evs.LoadProbeFormat(probe)
+	desc, err := evs.LoadProbeDescription(probe)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestAddKProbeIsNotRacy(t *testing.T) {
 		if err := evs.AddKProbe(probe); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := evs.LoadProbeFormat(probe); err != nil {
+		if _, err := evs.LoadProbeDescription(probe); err != nil {
 			t.Fatal(err)
 		}
 		if err := evs.RemoveKProbe(probe); err != nil {
@@ -141,7 +141,7 @@ func BenchmarkStructDecoder(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	desc, err := evs.LoadProbeFormat(probe)
+	desc, err := evs.LoadProbeDescription(probe)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -249,7 +249,7 @@ func TestKProbeReal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	desc, err := evs.LoadProbeFormat(probe)
+	desc, err := evs.LoadProbeDescription(probe)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -280,7 +280,7 @@ func TestKProbeReal(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := channel.MonitorProbe(desc.ID, decoder); err != nil {
+	if err := channel.MonitorProbe(desc, decoder); err != nil {
 		t.Fatal(err)
 	}
 

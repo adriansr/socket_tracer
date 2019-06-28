@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/pkg/errors"
 	"golang.org/x/sys/unix"
@@ -112,8 +113,8 @@ func NewPerfChannel(cfg ...PerfChannelConf) (channel *PerfChannel, err error) {
 	return channel, nil
 }
 
-func (c *PerfChannel) MonitorProbe(id int, decoder Decoder) error {
-	c.attr.Config = uint64(id)
+func (c *PerfChannel) MonitorProbe(desc ProbeDescription, decoder Decoder) error {
+	c.attr.Config = uint64(desc.ID)
 	doGroup := len(c.evs) > 0
 	for idx := 0; idx < runtime.NumCPU(); idx++ {
 		var group *perf.Event
@@ -130,8 +131,19 @@ func (c *PerfChannel) MonitorProbe(id int, decoder Decoder) error {
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(os.Stderr, "Registered channel ID: %d probe: %d CPU: %d\n", cid, id, idx)
-		c.streams[cid] = stream{probeID: id, decoder: decoder}
+		fd, err := ev.FD()
+		if err != nil {
+			return err
+		}
+		if len(desc.Probe.Filter) > 0 {
+			fbytes := []byte(desc.Probe.Filter + "\x00")
+			_, _, errNo := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), unix.PERF_EVENT_IOC_SET_FILTER, uintptr(unsafe.Pointer(&fbytes[0])))
+			if errNo != 0 {
+				return errNo
+			}
+		}
+		fmt.Fprintf(os.Stderr, "Registered channel ID: %d probe: %d CPU: %d\n", cid, desc.ID, idx)
+		c.streams[cid] = stream{probeID: desc.ID, decoder: decoder}
 		c.evs = append(c.evs, ev)
 
 		if !doGroup {

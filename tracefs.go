@@ -103,23 +103,23 @@ func (dfs *TraceFS) listProbes(filename string) (probes []Probe, err error) {
 }
 
 // AddKProbe installs a new kprobe/kretprobe.
-func (dfs *TraceFS) AddKProbe(probe Probe) error {
-	return dfs.appendProbe(kprobeCfgFile, probe.String())
+func (dfs *TraceFS) AddKProbe(probe Probe) (err error) {
+	return dfs.appendToFile(kprobeCfgFile, probe.String())
 }
 
 // RemoveKProbe removes an installed kprobe/kretprobe.
 func (dfs *TraceFS) RemoveKProbe(probe Probe) error {
-	return dfs.appendProbe(kprobeCfgFile, probe.RemoveString())
+	return dfs.appendToFile(kprobeCfgFile, probe.RemoveString())
 }
 
 // AddUProbe installs a new uprobe/uretprobe.
 func (dfs *TraceFS) AddUProbe(probe Probe) error {
-	return dfs.appendProbe(uprobeCfgFile, probe.String())
+	return dfs.appendToFile(uprobeCfgFile, probe.String())
 }
 
 // RemoveUProbe removes an installed uprobe/uretprobe.
 func (dfs *TraceFS) RemoveUProbe(probe Probe) error {
-	return dfs.appendProbe(uprobeCfgFile, probe.RemoveString())
+	return dfs.appendToFile(uprobeCfgFile, probe.RemoveString())
 }
 
 // RemoveAllUProbes removes all installed kprobes and kretprobes.
@@ -140,7 +140,7 @@ func (dfs *TraceFS) removeAllProbes(filename string) error {
 	return file.Close()
 }
 
-func (dfs *TraceFS) appendProbe(filename string, desc string) error {
+func (dfs *TraceFS) appendToFile(filename string, desc string) error {
 	file, err := os.OpenFile(filepath.Join(dfs.basePath, filename), os.O_WRONLY|os.O_APPEND|os.O_SYNC, 0)
 	if err != nil {
 		return err
@@ -183,11 +183,14 @@ type Field struct {
 	Type FieldType
 }
 
-// KProbeFormat describes a KProbe and the serialisation format used to encode
-// its arguments into a tracing event.
-type KProbeFormat struct {
+// ProbeDescription describes a Probe and the serialisation format used to
+// encode its arguments into a tracing event.
+type ProbeDescription struct {
 	// ID is the numeric ID given to this kprobe/kretprobe by the kernel.
 	ID int
+
+	// Probe is the probe described by this format.
+	Probe Probe
 
 	// Fields is a description of the fields (fetchargs) set by this kprobe.
 	Fields map[string]Field
@@ -208,15 +211,16 @@ var integerTypes = map[string]uint8{
 	"u64":   8,
 }
 
-// LoadProbeFormat returns the format used for serialisation of the given
+// LoadProbeDescription returns the format used for serialisation of the given
 // kprobe/kretprobe into a tracing event. The probe needs to be installed
 // for the kernel to provide its format.
-func (dfs *TraceFS) LoadProbeFormat(probe Probe) (desc KProbeFormat, err error) {
+func (dfs *TraceFS) LoadProbeDescription(probe Probe) (desc ProbeDescription, err error) {
 	path := filepath.Join(dfs.basePath, "events", probe.EffectiveGroup(), probe.Name, "format")
 	file, err := os.Open(path)
 	if err != nil {
 		return desc, err
 	}
+	desc.Probe = probe
 	desc.Fields = make(map[string]Field)
 	scanner := bufio.NewScanner(file)
 	parseFormat := false

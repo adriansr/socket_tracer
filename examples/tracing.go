@@ -58,7 +58,7 @@ func main() {
 		panic(err)
 	}
 	defer evs.RemoveKProbe(probe)
-	desc, err := evs.LoadProbeFormat(probe)
+	desc, err := evs.LoadProbeDescription(probe)
 	if err != nil {
 		panic(err)
 	}

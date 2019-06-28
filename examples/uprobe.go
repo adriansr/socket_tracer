@@ -40,7 +40,7 @@ func main() {
 		panic(err)
 	}
 	defer evs.RemoveUProbe(uprobe)
-	format, err := evs.LoadProbeFormat(uprobe)
+	format, err := evs.LoadProbeDescription(uprobe)
 	if err != nil {
 		panic(err)
 	}
