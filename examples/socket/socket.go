@@ -97,9 +97,10 @@ var probes = []struct {
 }
 
 func header(meta tracing.Metadata) string {
-	return fmt.Sprintf("%s probe=%d tid=%d",
+	return fmt.Sprintf("%s probe=%d pid=%d tid=%d",
 		timeRef.ToTime(meta.Timestamp).Format(time.RFC3339Nano),
 		meta.EventID,
+		meta.PID,
 		meta.TID)
 }
 
@@ -113,19 +114,9 @@ func (e *socketEvent) String() string {
 }
 
 func (e *acceptRetEvent) String() string {
-	pgpid, err := syscall.Getpgid(int(e.Meta.TID))
-	if err != nil {
-		return fmt.Sprintf("%s accept -- getpgpid() failed %v", err)
-	}
-	flag := "same"
-	if pgpid != int(e.Meta.TID) {
-		flag = "**DIFFERENT**"
-	}
 	return fmt.Sprintf(
-		"%s accept() pid=%d %s",
-		header(e.Meta),
-		pgpid,
-		flag)
+		"%s accept()",
+		header(e.Meta))
 }
 
 func (e *closeEvent) String() string {

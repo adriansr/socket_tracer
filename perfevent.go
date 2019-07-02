@@ -68,11 +68,9 @@ type Metadata struct {
 	StreamID  uint64
 	CPU       uint64
 	Timestamp uint64
-
-	// PID is really the TID. Both in the header and the probe raw data.
-	TID uint32
-
-	EventID int
+	TID       uint32
+	PID       uint32
+	EventID   int
 }
 
 // NewPerfChannel creates a new perf channel in order to receive events for
@@ -298,6 +296,7 @@ func makeMetadata(eventID int, record *perf.SampleRecord) Metadata {
 		StreamID:  record.StreamID,
 		Timestamp: record.Time,
 		TID:       record.Tid,
+		PID:       record.Pid,
 		EventID:   eventID,
 	}
 }
