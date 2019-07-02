@@ -14,7 +14,7 @@ import (
 
 // Decoder decodes a raw event into an usable type.
 type Decoder interface {
-	Decode(Message) (interface{}, error)
+	Decode(raw []byte, meta Metadata) (interface{}, error)
 }
 
 type mapDecoder []Field
@@ -38,11 +38,10 @@ func NewMapDecoder(format ProbeDescription) Decoder {
 	return mapDecoder(fields)
 }
 
-func (f mapDecoder) Decode(msg Message) (mapIf interface{}, err error) {
-	raw := msg.payload
+func (f mapDecoder) Decode(raw []byte, meta Metadata) (mapIf interface{}, err error) {
 	n := len(raw)
 	m := make(map[string]interface{}, len(f)+1)
-	m["meta"] = msg.meta
+	m["meta"] = meta
 	for _, field := range f {
 		if field.Offset+field.Size > n {
 			return nil, fmt.Errorf("perf event field %s overflows message of size %d", field.Name, n)
@@ -164,7 +163,9 @@ func NewStructDecoder(desc ProbeDescription, allocFn AllocateFn) (Decoder, error
 				name: name,
 				typ:  FieldTypeMeta,
 				dst:  outField.Offset,
-				len:  outField.Type.Size(),
+				// src&len are unused, this avoids checking len against actual payload
+				src: 0,
+				len: 0,
 			})
 			continue
 		}
@@ -212,8 +213,7 @@ func NewStructDecoder(desc ProbeDescription, allocFn AllocateFn) (Decoder, error
 	return dec, nil
 }
 
-func (d *structDecoder) Decode(msg Message) (s interface{}, err error) {
-	raw := msg.payload
+func (d *structDecoder) Decode(raw []byte, meta Metadata) (s interface{}, err error) {
 	n := uintptr(len(raw))
 
 	// Allocate a new struct to fill
@@ -246,7 +246,7 @@ func (d *structDecoder) Decode(msg Message) (s interface{}, err error) {
 			*((*string)(unsafe.Pointer(uptr + dec.dst))) = string(raw[offset : offset+len])
 
 		case FieldTypeMeta:
-			copy((*[1024]byte)(unsafe.Pointer(uptr + dec.dst))[:], (*[1024]byte)(unsafe.Pointer(&msg.meta))[:dec.len])
+			*(*Metadata)(unsafe.Pointer(uptr + dec.dst)) = meta
 		}
 
 	}

@@ -6,7 +6,6 @@ package socket_tracer
 
 import (
 	"context"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"runtime"
@@ -67,13 +66,13 @@ type PerfChannelConf func(*PerfChannel) error
 
 type Metadata struct {
 	StreamID  uint64
-	EventID   int
+	CPU       uint64
 	Timestamp uint64
-}
 
-type Message struct {
-	meta    Metadata
-	payload []byte
+	// PID is really the TID. Both in the header and the probe raw data.
+	TID uint32
+
+	EventID int
 }
 
 // NewPerfChannel creates a new perf channel in order to receive events for
@@ -95,9 +94,10 @@ func NewPerfChannel(cfg ...PerfChannelConf) (channel *PerfChannel, err error) {
 		attr: perf.Attr{
 			Type: perf.TracepointEvent,
 			SampleFormat: perf.SampleFormat{
-				// Careful, Adding more fields here changes the raw data format.
 				Raw:      true,
 				StreamID: true,
+				Tid:      true,
+				CPU:      true,
 			},
 		},
 	}
@@ -139,7 +139,7 @@ func (c *PerfChannel) MonitorProbe(desc ProbeDescription, decoder Decoder) error
 			fbytes := []byte(desc.Probe.Filter + "\x00")
 			_, _, errNo := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), unix.PERF_EVENT_IOC_SET_FILTER, uintptr(unsafe.Pointer(&fbytes[0])))
 			if errNo != 0 {
-				return errNo
+				return errors.Wrapf(errNo, "unable to set filter '%s'", errNo)
 			}
 		}
 		fmt.Fprintf(os.Stderr, "Registered channel ID: %d probe: %d CPU: %d\n", cid, desc.ID, idx)
@@ -293,29 +293,13 @@ func (ctx doneWrapperContext) Value(key interface{}) interface{} {
 
 var errMsgTooSmall = errors.New("perf event too small to parse")
 
-func (c *PerfChannel) decodeHeader(raw []byte, msg *Message) error {
-	if len(raw) < 4 {
-		return errMsgTooSmall
+func makeMetadata(eventID int, record *perf.SampleRecord) Metadata {
+	return Metadata{
+		StreamID:  record.StreamID,
+		Timestamp: record.Time,
+		TID:       record.Tid,
+		EventID:   eventID,
 	}
-	nRead := 0
-	// Read timestamp if configured
-	if c.attr.SampleFormat.Time {
-		if len(raw) < 8 {
-			return errMsgTooSmall
-		}
-		msg.meta.Timestamp = machineEndian.Uint64(raw)
-		nRead += 8
-	}
-	msg.meta.StreamID = machineEndian.Uint64(raw[nRead:])
-	msg.meta.EventID = c.streams[msg.meta.StreamID].probeID
-	nRead += 8
-	payloadLen := int(machineEndian.Uint32(raw[nRead:]))
-	nRead += 4
-	if len(raw) < payloadLen+nRead {
-		return fmt.Errorf("perf event truncated. Expected %d got %d", payloadLen+nRead, len(raw))
-	}
-	msg.payload = raw[nRead : nRead+payloadLen]
-	return nil
 }
 
 func (c *PerfChannel) channelLoop(ev *perf.Event) {
@@ -325,10 +309,8 @@ func (c *PerfChannel) channelLoop(ev *perf.Event) {
 
 	ctx := doneWrapperContext(c.done)
 
-	var msg Message
 	for {
-		var raw perf.RawRecord
-		err := ev.ReadRawRecord(ctx, &raw)
+		record, err := ev.ReadRecord(ctx)
 		if ctx.Err() != nil {
 			return
 		}
@@ -336,19 +318,21 @@ func (c *PerfChannel) channelLoop(ev *perf.Event) {
 			c.errC <- err
 			return
 		}
-		switch raw.Header.Type {
+		header := record.Header()
+		switch header.Type {
 		case unix.PERF_RECORD_SAMPLE:
-			if err := c.decodeHeader(raw.Data, &msg); err != nil {
-				fmt.Fprintf(os.Stderr, "Read bogus message [%d bytes]:\n%s\n", len(raw.Data), hex.Dump(raw.Data))
-				c.errC <- err
+			sample, ok := record.(*perf.SampleRecord)
+			if !ok {
+				c.errC <- errors.New("PERF_RECORD_SAMPLE is not a *perf.SampleRecord")
+				return
+			}
+			stream := c.streams[sample.StreamID]
+			if stream.decoder == nil {
+				c.errC <- fmt.Errorf("no decoder for stream:%d", sample.StreamID)
 				continue
 			}
-			decoder := c.streams[msg.meta.StreamID].decoder
-			if decoder == nil {
-				c.errC <- fmt.Errorf("no decoder for stream:%d event:%d", msg.meta.StreamID, msg.meta.EventID)
-				continue
-			}
-			output, err := decoder.Decode(msg)
+			meta := makeMetadata(stream.probeID, sample)
+			output, err := stream.decoder.Decode(sample.Raw, meta)
 			if err != nil {
 				c.errC <- err
 				continue
@@ -356,11 +340,12 @@ func (c *PerfChannel) channelLoop(ev *perf.Event) {
 			c.sampleC <- output
 
 		case unix.PERF_RECORD_LOST:
-			var lost uint64
-			if len(raw.Data) >= 16 {
-				lost = machineEndian.Uint64(raw.Data[8:])
+			lost, ok := record.(*perf.LostRecord)
+			if !ok {
+				c.errC <- errors.New("PERF_RECORD_LOST is not a *perf.LostRecord")
+				return
 			}
-			c.lostC <- lost
+			c.lostC <- lost.Lost
 		}
 	}
 }

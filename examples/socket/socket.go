@@ -13,13 +13,12 @@ import (
 
 type connectEvent struct {
 	Meta tracing.Metadata `kprobe:"metadata"`
-	PID  uint32           `kprobe:"common_pid"`
 	P0   uint8            `kprobe:"p0"`
 	Path string           `kprobe:"path"`
 }
+
 type acceptEvent struct {
 	Meta tracing.Metadata `kprobe:"metadata"`
-	PID  uint32           `kprobe:"common_pid"`
 }
 
 func registerProbe(
@@ -60,7 +59,7 @@ func main() {
 		tracing.WithBufferSize(4096),
 		tracing.WithErrBufferSize(1),
 		tracing.WithLostBufferSize(256),
-		tracing.WithRingSizeExponent(5),
+		tracing.WithRingSizeExponent(7),
 		tracing.WithPID(perf.AllThreads),
 		tracing.WithTimestamp())
 	if err != nil {
@@ -111,6 +110,8 @@ func main() {
 		panic(err)
 	}
 
+	const output = true
+
 	var t TimeReference
 	for active := true; active; {
 		select {
@@ -119,11 +120,13 @@ func main() {
 				break
 			}
 			st.Received()
-			switch v := iface.(type) {
-			case *connectEvent:
-				st.Output(fmt.Sprintf("%v pid=%d [%d] open([%c]'%s')", t.ToTime(v.Meta.Timestamp).Format(time.RFC3339Nano), v.PID, v.Meta.EventID, v.P0, v.Path))
-			case *acceptEvent:
-				st.Output(fmt.Sprintf("%v pid=%d [%d] accept()", t.ToTime(v.Meta.Timestamp).Format(time.RFC3339Nano), v.PID, v.Meta.EventID))
+			if output {
+				switch v := iface.(type) {
+				case *connectEvent:
+					st.Output(fmt.Sprintf("%v tid=%d [%d] open([%c]'%s')", t.ToTime(v.Meta.Timestamp).Format(time.RFC3339Nano), v.Meta.TID, v.Meta.EventID, v.P0, v.Path))
+				case *acceptEvent:
+					st.Output(fmt.Sprintf("%v tid=%d [%d] accept()", t.ToTime(v.Meta.Timestamp).Format(time.RFC3339Nano), v.Meta.TID, v.Meta.EventID))
+				}
 			}
 
 		case err := <-channel.ErrC():

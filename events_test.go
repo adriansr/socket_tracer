@@ -70,11 +70,9 @@ func BenchmarkMapDecoder(b *testing.B) {
 	decoder := NewMapDecoder(desc)
 	b.ResetTimer()
 	var sum int = 0
-	msg := Message{
-		payload: rawMsg,
-	}
+	var meta Metadata
 	for i := 0; i < b.N; i++ {
-		iface, err := decoder.Decode(msg)
+		iface, err := decoder.Decode(rawMsg, meta)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -92,38 +90,6 @@ func BenchmarkMapDecoder(b *testing.B) {
 	b.StopTimer()
 	b.Log("result sum=", sum)
 	b.ReportAllocs()
-}
-
-// This test is to make sure that there is no delay between when a KProbe
-// is added and its 'format' file is available, that is, LoadKProbeDescription
-// can be called immediately after AddKProbe.
-func TestAddKProbeIsNotRacy(t *testing.T) {
-	evs, err := NewTraceFS()
-	if err != nil {
-		t.Fatal(err)
-	}
-	probe := Probe{
-		Group:     "test_group",
-		Name:      "test_name",
-		Address:   "sys_connect",
-		Fetchargs: "fd=%di +0(%si) +8(%si) +16(%si):s16 +24(%si):u8",
-	}
-	defer func() {
-		if err := evs.RemoveAllKProbes(); err != nil {
-			t.Fatal(err)
-		}
-	}()
-	for i := 0; i < 100; i++ {
-		if err := evs.AddKProbe(probe); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := evs.LoadProbeDescription(probe); err != nil {
-			t.Fatal(err)
-		}
-		if err := evs.RemoveKProbe(probe); err != nil {
-			t.Fatal(err)
-		}
-	}
 }
 
 func BenchmarkStructDecoder(b *testing.B) {
@@ -170,11 +136,9 @@ func BenchmarkStructDecoder(b *testing.B) {
 	}
 	b.ResetTimer()
 	sum := 0
-	msg := Message{
-		payload: rawMsg,
-	}
+	var meta Metadata
 	for i := 0; i < b.N; i++ {
-		iface, err := decoder.Decode(msg)
+		iface, err := decoder.Decode(rawMsg, meta)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -192,6 +156,38 @@ func BenchmarkStructDecoder(b *testing.B) {
 	b.StopTimer()
 	b.Log("result sum=", sum)
 	b.ReportAllocs()
+}
+
+// This test is to make sure that there is no delay between when a KProbe
+// is added and its 'format' file is available, that is, LoadKProbeDescription
+// can be called immediately after AddKProbe.
+func TestAddKProbeIsNotRacy(t *testing.T) {
+	evs, err := NewTraceFS()
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe := Probe{
+		Group:     "test_group",
+		Name:      "test_name",
+		Address:   "sys_connect",
+		Fetchargs: "fd=%di +0(%si) +8(%si) +16(%si):s16 +24(%si):u8",
+	}
+	defer func() {
+		if err := evs.RemoveAllKProbes(); err != nil {
+			t.Fatal(err)
+		}
+	}()
+	for i := 0; i < 100; i++ {
+		if err := evs.AddKProbe(probe); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := evs.LoadProbeDescription(probe); err != nil {
+			t.Fatal(err)
+		}
+		if err := evs.RemoveKProbe(probe); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 func TestKProbeReal(t *testing.T) {

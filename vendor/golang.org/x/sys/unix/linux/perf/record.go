@@ -753,6 +753,9 @@ func (sr *SampleRecord) DecodeFrom(raw *RawRecord, ev *Event) {
 	if ev.a.SampleFormat.StreamID {
 		if sr.StreamID != ev.id {
 			ev = ev.groupByID[sr.StreamID]
+			if ev == nil {
+				panic(fmt.Sprintf("invalid stream %v", sr.StreamID))
+			}
 		}
 	}
 
