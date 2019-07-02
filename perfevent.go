@@ -139,7 +139,7 @@ func (c *PerfChannel) MonitorProbe(desc ProbeDescription, decoder Decoder) error
 			fbytes := []byte(desc.Probe.Filter + "\x00")
 			_, _, errNo := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), unix.PERF_EVENT_IOC_SET_FILTER, uintptr(unsafe.Pointer(&fbytes[0])))
 			if errNo != 0 {
-				return errors.Wrapf(errNo, "unable to set filter '%s'", errNo)
+				return errors.Wrapf(errNo, "unable to set filter '%s'", desc.Probe.Filter)
 			}
 		}
 		fmt.Fprintf(os.Stderr, "Registered channel ID: %d probe: %d CPU: %d\n", cid, desc.ID, idx)

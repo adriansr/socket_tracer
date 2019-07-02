@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"os"
 	"runtime"
 	"sync"
 
@@ -9,8 +11,9 @@ import (
 
 func main() {
 	var wg sync.WaitGroup
+	fmt.Printf("My PID is %d\n", os.Getpid())
 	for idx, N := 0, runtime.GOMAXPROCS(0); idx < N*4; idx++ {
-		wg.Add(2)
+		wg.Add(1)
 		go func() {
 			runtime.LockOSThread()
 			defer runtime.UnlockOSThread()

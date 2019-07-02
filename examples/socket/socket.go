@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
+	"syscall"
+	"text/template"
 	"time"
 
 	"github.com/pkg/errors"
@@ -11,14 +14,141 @@ import (
 	tracing "github.com/adriansr/socket_tracer"
 )
 
-type connectEvent struct {
-	Meta tracing.Metadata `kprobe:"metadata"`
-	P0   uint8            `kprobe:"p0"`
-	Path string           `kprobe:"path"`
+type socketEvent struct {
+	Meta     tracing.Metadata `kprobe:"metadata"`
+	Domain   int              `kprobe:"domain"`
+	Type     int              `kprobe:"type"`
+	Protocol int              `kprobe:"protocol"`
 }
 
-type acceptEvent struct {
+type socketRetEvent struct {
 	Meta tracing.Metadata `kprobe:"metadata"`
+	FD   int              `kprobe:"fd"`
+}
+
+type closeEvent struct {
+	Meta tracing.Metadata `kprobe:"metadata"`
+	FD   int              `kprobe:"fd"`
+}
+
+type acceptRetEvent struct {
+	Meta tracing.Metadata `kprobe:"metadata"`
+	FD   int              `kprobe:"fd"`
+}
+
+var constants = map[string]interface{}{
+	"AF_INET":     2,
+	"AF_INET6":    10,
+	"SOCK_STREAM": 2,
+}
+
+var timeRef TimeReference
+
+var probes = []struct {
+	probe tracing.Probe
+	alloc tracing.AllocateFn
+}{
+	{
+		// x86_64 : %rdi, %rsi, %rdx, %rcx, %r8 and %r9. The kernel interface uses %rdi, %rsi, %rdx, %r10, %r8 and %r9.
+
+		probe: tracing.Probe{
+			//Type:      tracing.TypeKRetProbe,
+			Name:      "sys_socket_in",
+			Address:   "sys_socket",
+			Fetchargs: "domain=%di type=%si protocol=%dx",
+			Filter:    interpolate("(domain=={{.AF_INET}} || domain=={{.AF_INET6}}) && type=={{.SOCK_STREAM}}"),
+		},
+		alloc: func() interface{} {
+			return new(socketEvent)
+		},
+	},
+	{
+		probe: tracing.Probe{
+			Type:      tracing.TypeKRetProbe,
+			Name:      "sys_socket_out",
+			Address:   "sys_socket",
+			Fetchargs: "fd=%ax",
+		},
+		alloc: func() interface{} {
+			return new(socketRetEvent)
+		},
+	},
+	{
+		probe: tracing.Probe{
+			Name:      "sys_close_in",
+			Address:   "sys_close",
+			Fetchargs: "fd=%di",
+		},
+		alloc: func() interface{} {
+			return new(closeEvent)
+		},
+	},
+	{
+		probe: tracing.Probe{
+			Type:      tracing.TypeKRetProbe,
+			Name:      "accept_out",
+			Address:   "sys_accept",
+			Fetchargs: "fd=%ax",
+		},
+		alloc: func() interface{} {
+			return new(acceptRetEvent)
+		},
+	},
+}
+
+func header(meta tracing.Metadata) string {
+	return fmt.Sprintf("%s probe=%d tid=%d",
+		timeRef.ToTime(meta.Timestamp).Format(time.RFC3339Nano),
+		meta.EventID,
+		meta.TID)
+}
+
+func (e *socketEvent) String() string {
+	return fmt.Sprintf(
+		"%s socket(%d, %d, %d)",
+		header(e.Meta),
+		e.Domain,
+		e.Type,
+		e.Protocol)
+}
+
+func (e *acceptRetEvent) String() string {
+	pgpid, err := syscall.Getpgid(int(e.Meta.TID))
+	if err != nil {
+		return fmt.Sprintf("%s accept -- getpgpid() failed %v", err)
+	}
+	flag := "same"
+	if pgpid != int(e.Meta.TID) {
+		flag = "**DIFFERENT**"
+	}
+	return fmt.Sprintf(
+		"%s accept() pid=%d %s",
+		header(e.Meta),
+		pgpid,
+		flag)
+}
+
+func (e *closeEvent) String() string {
+	return fmt.Sprintf(
+		"%s close(%d)",
+		header(e.Meta),
+		e.FD)
+}
+
+func (e *socketRetEvent) String() string {
+	if e.FD < 0 {
+		errno := syscall.Errno(0 - e.FD)
+		return fmt.Sprintf("%s socket failed errno=%d (%s)", header(e.Meta), errno, errno.Error())
+	}
+	return fmt.Sprintf("%s socket fd=%d", header(e.Meta), e.FD)
+}
+
+func interpolate(s string) string {
+	buf := &bytes.Buffer{}
+	if err := template.Must(template.New("").Parse(s)).Execute(buf, constants); err != nil {
+		panic(err)
+	}
+	return buf.String()
 }
 
 func registerProbe(
@@ -66,33 +196,7 @@ func main() {
 		panic(err)
 	}
 
-	for _, p := range []struct {
-		probe tracing.Probe
-		alloc tracing.AllocateFn
-	}{
-		{
-			probe: tracing.Probe{
-				//Type:      tracing.TypeKRetProbe,
-				Name:      "connect",
-				Address:   "sys_open",
-				Fetchargs: "p0=+0(%di):u8 path=+0(%di):string",
-				Filter:    "p0!=47",
-			},
-			alloc: func() interface{} {
-				return new(connectEvent)
-			},
-		},
-		{
-			probe: tracing.Probe{
-				Type:    tracing.TypeKRetProbe,
-				Name:    "accept",
-				Address: "sys_accept",
-			},
-			alloc: func() interface{} {
-				return new(acceptEvent)
-			},
-		},
-	} {
+	for _, p := range probes {
 		if err := registerProbe(p.probe, p.alloc, debugFS, channel); err != nil {
 			panic(err)
 		}
@@ -112,7 +216,6 @@ func main() {
 
 	const output = true
 
-	var t TimeReference
 	for active := true; active; {
 		select {
 		case iface, ok := <-channel.C():
@@ -121,12 +224,11 @@ func main() {
 			}
 			st.Received()
 			if output {
-				switch v := iface.(type) {
-				case *connectEvent:
-					st.Output(fmt.Sprintf("%v tid=%d [%d] open([%c]'%s')", t.ToTime(v.Meta.Timestamp).Format(time.RFC3339Nano), v.Meta.TID, v.Meta.EventID, v.P0, v.Path))
-				case *acceptEvent:
-					st.Output(fmt.Sprintf("%v tid=%d [%d] accept()", t.ToTime(v.Meta.Timestamp).Format(time.RFC3339Nano), v.Meta.TID, v.Meta.EventID))
+				v, ok := iface.(fmt.Stringer)
+				if !ok {
+					panic(fmt.Sprintf("not a stringer type: %T", iface))
 				}
+				st.Output(v.String())
 			}
 
 		case err := <-channel.ErrC():
