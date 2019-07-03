@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"os"
-	"syscall"
 	"text/template"
 	"time"
 
@@ -13,28 +12,6 @@ import (
 
 	tracing "github.com/adriansr/socket_tracer"
 )
-
-type socketEvent struct {
-	Meta     tracing.Metadata `kprobe:"metadata"`
-	Domain   int              `kprobe:"domain"`
-	Type     int              `kprobe:"type"`
-	Protocol int              `kprobe:"protocol"`
-}
-
-type socketRetEvent struct {
-	Meta tracing.Metadata `kprobe:"metadata"`
-	FD   int              `kprobe:"fd"`
-}
-
-type closeEvent struct {
-	Meta tracing.Metadata `kprobe:"metadata"`
-	FD   int              `kprobe:"fd"`
-}
-
-type acceptRetEvent struct {
-	Meta tracing.Metadata `kprobe:"metadata"`
-	FD   int              `kprobe:"fd"`
-}
 
 var constants = map[string]interface{}{
 	"AF_INET":     2,
@@ -94,44 +71,6 @@ var probes = []struct {
 			return new(acceptRetEvent)
 		},
 	},
-}
-
-func header(meta tracing.Metadata) string {
-	return fmt.Sprintf("%s probe=%d pid=%d tid=%d",
-		timeRef.ToTime(meta.Timestamp).Format(time.RFC3339Nano),
-		meta.EventID,
-		meta.PID,
-		meta.TID)
-}
-
-func (e *socketEvent) String() string {
-	return fmt.Sprintf(
-		"%s socket(%d, %d, %d)",
-		header(e.Meta),
-		e.Domain,
-		e.Type,
-		e.Protocol)
-}
-
-func (e *acceptRetEvent) String() string {
-	return fmt.Sprintf(
-		"%s accept()",
-		header(e.Meta))
-}
-
-func (e *closeEvent) String() string {
-	return fmt.Sprintf(
-		"%s close(%d)",
-		header(e.Meta),
-		e.FD)
-}
-
-func (e *socketRetEvent) String() string {
-	if e.FD < 0 {
-		errno := syscall.Errno(0 - e.FD)
-		return fmt.Sprintf("%s socket failed errno=%d (%s)", header(e.Meta), errno, errno.Error())
-	}
-	return fmt.Sprintf("%s socket fd=%d", header(e.Meta), e.FD)
 }
 
 func interpolate(s string) string {
@@ -196,16 +135,15 @@ func main() {
 	done := make(chan struct{}, 0)
 	defer close(done)
 
-	st := stats{
+	output := stats{
 		output: make(chan string, 1024),
 	}
-	go st.Run(time.Second/4, done)
+	st := NewState(&output)
+	go output.Run(time.Second/4, done)
 
 	if err := channel.Run(); err != nil {
 		panic(err)
 	}
-
-	const output = true
 
 	for active := true; active; {
 		select {
@@ -213,21 +151,20 @@ func main() {
 			if !ok {
 				break
 			}
-			st.Received()
-			if output {
-				v, ok := iface.(fmt.Stringer)
-				if !ok {
-					panic(fmt.Sprintf("not a stringer type: %T", iface))
-				}
-				st.Output(v.String())
+			output.Received()
+			v, ok := iface.(event)
+			if !ok {
+				panic(fmt.Sprintf("not a stringer type: %T", iface))
 			}
+			output.Output(v.String())
+			v.Update(&st)
 
 		case err := <-channel.ErrC():
 			fmt.Fprintf(os.Stderr, "Err received from channel: %v\n", err)
 			active = false
 
 		case numLost := <-channel.LostC():
-			st.Lost(numLost)
+			output.Lost(numLost)
 		}
 	}
 }
