@@ -38,6 +38,8 @@ type GuessAction struct {
 
 	// Validate must take a tracing record and determine if it's a valid guess.
 	Validate func(event interface{}, ctx interface{}) (GuessResult, bool)
+
+	Terminate func(ctx interface{})
 }
 
 // Guess is a helper function to easily determine memory layouts of kernel structs
@@ -49,6 +51,9 @@ type GuessAction struct {
 // It terminates once Validate founds a positive record or when the timeout
 // expires.
 func Guess(tfs *tracing.TraceFS, guesser GuessAction) (result GuessResult, err error) {
+	if guesser.Validate == nil || guesser.Trigger == nil || guesser.Decoder == nil {
+		return nil, errors.New("required callback not defined")
+	}
 	probe := guesser.Probe
 	if err := tfs.AddKProbe(probe); err != nil {
 		return nil, errors.Wrapf(err, "failed to add kprobe '%s'", probe.String())
@@ -80,37 +85,50 @@ func Guess(tfs *tracing.TraceFS, guesser GuessAction) (result GuessResult, err e
 	var wg sync.WaitGroup
 	var once sync.Once
 	wg.Add(1)
-	defer once.Do(wg.Done)
 
 	// Trigger goroutine.
 	go func() {
 		// Make sure it doesn't switch OS threads during it's lifetime.
 		runtime.LockOSThread()
 		defer runtime.UnlockOSThread()
+		defer close(tidChan)
 
-		ctx, err := guesser.Prepare()
-		tidChan <- shared{tid: syscall.Gettid(), ctx: ctx, err: err}
-		if err != nil {
+		var sh shared
+		sh.tid = syscall.Gettid()
+		if guesser.Prepare != nil {
+			sh.ctx, sh.err = guesser.Prepare()
+		}
+		tidChan <- sh
+		if sh.err != nil {
 			return
 		}
 
 		wg.Wait()
 
 		// Execute custom trigger
-		guesser.Trigger(timeout, ctx)
+		guesser.Trigger(timeout, sh.ctx)
 	}()
 
-	sharedState := <-tidChan
-	if sharedState.err != nil {
-		return nil, errors.Wrap(sharedState.err, "prepare failed")
+	ctx := <-tidChan
+	if ctx.err != nil {
+		return nil, errors.Wrap(ctx.err, "prepare failed")
 	}
+
+	if guesser.Terminate != nil {
+		defer func() {
+			<-tidChan
+			guesser.Terminate(ctx.ctx)
+		}()
+	}
+
+	defer once.Do(wg.Done)
 
 	perfchan, err := tracing.NewPerfChannel(
 		tracing.WithBufferSize(8),
 		tracing.WithErrBufferSize(1),
 		tracing.WithLostBufferSize(8),
 		tracing.WithRingSizeExponent(2),
-		tracing.WithTID(sharedState.tid))
+		tracing.WithTID(ctx.tid))
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create perfchannel")
 	}
@@ -147,7 +165,7 @@ func Guess(tfs *tracing.TraceFS, guesser GuessAction) (result GuessResult, err e
 			if !ok {
 				return nil, errors.New("perf channel closed unexpectedly")
 			}
-			if result, ok = guesser.Validate(ev, sharedState.ctx); !ok {
+			if result, ok = guesser.Validate(ev, ctx.ctx); !ok {
 				continue
 			}
 			return result, nil

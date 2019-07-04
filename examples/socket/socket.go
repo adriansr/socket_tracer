@@ -77,7 +77,7 @@ var probes = []struct {
 		probe: tracing.Probe{
 			Name:      "tcp4_connect_in",
 			Address:   "tcp_v4_connect",
-			Fetchargs: "af=+{{.SOCKADDR_IN_AF}}(%si):u16 addr=+{{.SOCKADDR_IN_ADDR}}(%si):u32 port=+{{.SOCKADDR_IN_PORT}}(%si):u16",
+			Fetchargs: "laddr=+{{.INET_SOCK_LADDR}}(%di):u32 lport=+{{.INET_SOCK_LPORT}}(%di):u16 af=+{{.SOCKADDR_IN_AF}}(%si):u16 addr=+{{.SOCKADDR_IN_ADDR}}(%si):u32 port=+{{.SOCKADDR_IN_PORT}}(%si):u16",
 			Filter:    "af=={{.AF_INET}}",
 		},
 		alloc: func() interface{} {

@@ -38,9 +38,11 @@ type acceptRetEvent struct {
 }
 
 type tcpV4ConnectCall struct {
-	Meta    tracing.Metadata `kprobe:"metadata"`
-	Address uint32           `kprobe:"addr"`
-	Port    uint16           `kprobe:"port"`
+	Meta  tracing.Metadata `kprobe:"metadata"`
+	LAddr uint32           `kprobe:"laddr"`
+	LPort uint16           `kprobe:"lport"`
+	RAddr uint32           `kprobe:"addr"`
+	RPort uint16           `kprobe:"port"`
 }
 
 type tcpV4ConnectResult struct {
@@ -64,15 +66,21 @@ func (e *tcpV4ConnectResult) Update(*state) {
 
 func (e *tcpV4ConnectCall) String() string {
 	var buf [4]byte
-	tracing.MachineEndian.PutUint32(buf[:], e.Address)
-	addr := net.IPv4(buf[0], buf[1], buf[2], buf[3])
-	tracing.MachineEndian.PutUint16(buf[:], e.Port)
-	port := binary.BigEndian.Uint16(buf[:])
+	tracing.MachineEndian.PutUint32(buf[:], e.LAddr)
+	laddr := net.IPv4(buf[0], buf[1], buf[2], buf[3])
+	tracing.MachineEndian.PutUint16(buf[:], e.LPort)
+	lport := binary.BigEndian.Uint16(buf[:])
+	tracing.MachineEndian.PutUint32(buf[:], e.RAddr)
+	raddr := net.IPv4(buf[0], buf[1], buf[2], buf[3])
+	tracing.MachineEndian.PutUint16(buf[:], e.RPort)
+	rport := binary.BigEndian.Uint16(buf[:])
 	return fmt.Sprintf(
-		"%s connect(%s, %d)",
+		"%s connect(%s:%d -> %s:%d)",
 		header(e.Meta),
-		addr.String(),
-		port)
+		laddr.String(),
+		lport,
+		raddr.String(),
+		rport)
 }
 
 func (e *tcpV4ConnectCall) Update(*state) {
