@@ -193,10 +193,10 @@ func WithRingSizeExponent(exp int) PerfChannelConf {
 	}
 }
 
-func WithPID(pid int) PerfChannelConf {
+func WithTID(pid int) PerfChannelConf {
 	return func(channel *PerfChannel) error {
 		if pid < -1 {
-			return fmt.Errorf("bad pid for ring buffer: %d", pid)
+			return fmt.Errorf("bad thread ID (TID): %d", pid)
 		}
 		channel.pid = pid
 		return nil

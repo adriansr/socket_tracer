@@ -122,7 +122,7 @@ func guessStructSockaddrIn(tfs *tracing.TraceFS) (offs structSockAddrInOffsets, 
 		tracing.WithErrBufferSize(1),
 		tracing.WithLostBufferSize(8),
 		tracing.WithRingSizeExponent(2),
-		tracing.WithPID(tid))
+		tracing.WithTID(tid))
 	if err != nil {
 		return offs, errors.Wrap(err, "failed to create perfchannel")
 	}

@@ -126,7 +126,7 @@ func main() {
 		tracing.WithErrBufferSize(1),
 		tracing.WithLostBufferSize(256),
 		tracing.WithRingSizeExponent(7),
-		tracing.WithPID(perf.AllThreads),
+		tracing.WithTID(perf.AllThreads),
 		tracing.WithTimestamp())
 	if err != nil {
 		panic(err)
