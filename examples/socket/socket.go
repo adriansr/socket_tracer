@@ -115,7 +115,7 @@ func main() {
 		panic(err)
 	}
 
-	offSockAddrIn, err := guessStructSockaddrIn(debugFS)
+	offSockAddrIn, err := Guess(debugFS, guessStructSockAddrIn)
 	if err != nil {
 		panic(err)
 	}
