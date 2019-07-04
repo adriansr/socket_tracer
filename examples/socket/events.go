@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/binary"
 	"fmt"
+	"net"
 	"syscall"
 	"time"
 
@@ -33,6 +35,65 @@ type closeEvent struct {
 type acceptRetEvent struct {
 	Meta tracing.Metadata `kprobe:"metadata"`
 	FD   int              `kprobe:"fd"`
+}
+
+type tcpV4ConnectCall struct {
+	Meta    tracing.Metadata `kprobe:"metadata"`
+	Address uint32           `kprobe:"addr"`
+	Port    uint16           `kprobe:"port"`
+}
+
+type tcpV4ConnectResult struct {
+	Meta   tracing.Metadata `kprobe:"metadata"`
+	Retval int              `kprobe:"retval"`
+}
+
+type bind4Call struct {
+	Meta    tracing.Metadata `kprobe:"metadata"`
+	Address uint32           `kprobe:"addr"`
+	Port    uint16           `kprobe:"port"`
+}
+
+func (e *tcpV4ConnectResult) String() string {
+	return fmt.Sprintf("%s <- connect %s", header(e.Meta), kernErrorDesc(e.Retval))
+}
+
+func (e *tcpV4ConnectResult) Update(*state) {
+	// TODO
+}
+
+func (e *tcpV4ConnectCall) String() string {
+	var buf [4]byte
+	tracing.MachineEndian.PutUint32(buf[:], e.Address)
+	addr := net.IPv4(buf[0], buf[1], buf[2], buf[3])
+	tracing.MachineEndian.PutUint16(buf[:], e.Port)
+	port := binary.BigEndian.Uint16(buf[:])
+	return fmt.Sprintf(
+		"%s connect(%s, %d)",
+		header(e.Meta),
+		addr.String(),
+		port)
+}
+
+func (e *tcpV4ConnectCall) Update(*state) {
+	// TODO
+}
+
+func (e *bind4Call) String() string {
+	var buf [4]byte
+	tracing.MachineEndian.PutUint32(buf[:], e.Address)
+	addr := net.IPv4(buf[0], buf[1], buf[2], buf[3])
+	tracing.MachineEndian.PutUint16(buf[:], e.Port)
+	port := binary.BigEndian.Uint16(buf[:])
+	return fmt.Sprintf(
+		"%s bind(%s, %d)",
+		header(e.Meta),
+		addr.String(),
+		port)
+}
+
+func (e *bind4Call) Update(*state) {
+	// TODO
 }
 
 // Adjust timestamp length to always be 30 char by adding trailing zeroes to
@@ -90,6 +151,18 @@ func (e *closeEvent) String() string {
 		"%s close(%d)",
 		header(e.Meta),
 		e.FD)
+}
+
+func kernErrorDesc(retval int) string {
+	switch {
+	case retval < 0:
+		errno := syscall.Errno(0 - retval)
+		return fmt.Sprintf("failed errno=%d (%s)", errno, errno.Error())
+	case retval == 0:
+		return "ok"
+	default:
+		return fmt.Sprintf("ok (value=%d)", retval)
+	}
 }
 
 func (e *closeEvent) Update(s *state) {

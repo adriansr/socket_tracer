@@ -2,7 +2,9 @@ package main
 
 import (
 	"encoding/binary"
+	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	tracing "github.com/adriansr/socket_tracer"
@@ -14,63 +16,60 @@ const (
 	magicIPv4 = 0x7f123456
 )
 
-// Number of Qn fields here is tied to fetchBytes
-type byteDump32 struct {
-	Meta tracing.Metadata `kprobe:"metadata"`
-	Q0   uint64           `kprobe:"q0"`
-	Q1   uint64           `kprobe:"q1"`
-	Q2   uint64           `kprobe:"q2"`
-	Q3   uint64           `kprobe:"q3"`
+func makeDump(param string, from, to int) string {
+	var params []string
+	for off := from; off < to; off += 8 {
+		params = append(params, fmt.Sprintf("+%d(%s):u64", off, param))
+	}
+	return strings.Join(params, " ")
 }
 
 var guessStructSockAddrIn = GuessAction{
 	Probe: tracing.Probe{
 		Name:      "offset_guess",
 		Address:   "tcp_v4_connect",
-		Fetchargs: "q0=+0(%si):u64 q1=+8(%si):u64 q2=+16(%si):u64 q3=+24(%si):u64",
+		Fetchargs: makeDump("%si", 0, 32),
 	},
 
 	Timeout: time.Second * 5,
 
 	Decoder: func(description tracing.ProbeDescription) (decoder tracing.Decoder, e error) {
-		return tracing.NewStructDecoder(description, func() interface{} {
-			return new(byteDump32)
-		})
+		return tracing.NewDumpDecoder(description)
 	},
 
 	Validate: func(ev interface{}) (GuessResult, bool) {
-		const fetchBytes = 32
-		str, ok := ev.(*byteDump32)
-		if !ok {
+		arr := ev.([]byte)
+		N := len(arr)
+		if N < 32 {
 			return nil, false
 		}
-		arr := str.ToArray()
-
 		if tracing.MachineEndian.Uint16(arr[0:2]) != unix.AF_INET {
 			return nil, false
 		}
 
 		var off int
-		for off = 2; off <= fetchBytes-2; off += 2 {
+		for off = 2; off <= N-2; off += 2 {
 			if binary.BigEndian.Uint16(arr[off:]) == magicPort {
 				break
 			}
 		}
-		if off > fetchBytes-2 {
+		if off > N-2 {
 			return nil, false
 		}
 		offsetOfPort := off
 
-		for off = 2; off <= fetchBytes-4; off += 2 {
+		for off = 2; off <= N-4; off += 2 {
 			if binary.BigEndian.Uint32(arr[off:]) == magicIPv4 {
 				break
 			}
 		}
-		if off > fetchBytes-4 {
+		if off > N-4 {
 			return nil, false
 		}
 		offsetOfAddr := off
 		return GuessResult{
+			// family is fixed at offset zero
+			"SOCKADDR_IN_AF":   0,
 			"SOCKADDR_IN_PORT": offsetOfPort,
 			"SOCKADDR_IN_ADDR": offsetOfAddr,
 		}, true
@@ -89,12 +88,4 @@ var guessStructSockAddrIn = GuessAction{
 			conn.Close()
 		}
 	},
-}
-
-func (d *byteDump32) ToArray() (array [32]byte) {
-	tracing.MachineEndian.PutUint64(array[0:8], d.Q0)
-	tracing.MachineEndian.PutUint64(array[8:16], d.Q1)
-	tracing.MachineEndian.PutUint64(array[16:24], d.Q2)
-	tracing.MachineEndian.PutUint64(array[24:32], d.Q3)
-	return
 }

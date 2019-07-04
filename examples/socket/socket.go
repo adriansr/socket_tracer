@@ -25,52 +25,89 @@ var probes = []struct {
 	probe tracing.Probe
 	alloc tracing.AllocateFn
 }{
-	{
-		// x86_64 : %rdi, %rsi, %rdx, %rcx, %r8 and %r9. The kernel interface uses %rdi, %rsi, %rdx, %r10, %r8 and %r9.
+	/*
+		{
+			// x86_64 : %rdi, %rsi, %rdx, %rcx, %r8 and %r9. The kernel interface uses %rdi, %rsi, %rdx, %r10, %r8 and %r9.
 
+			probe: tracing.Probe{
+				//Type:      tracing.TypeKRetProbe,
+				Name:      "sys_socket_in",
+				Address:   "sys_socket",
+				Fetchargs: "domain=%di type=%si protocol=%dx",
+				Filter:    "(domain=={{.AF_INET}} || domain=={{.AF_INET6}}) && type=={{.SOCK_STREAM}}",
+			},
+			alloc: func() interface{} {
+				return new(socketEvent)
+			},
+		},
+		{
+			probe: tracing.Probe{
+				Type:      tracing.TypeKRetProbe,
+				Name:      "sys_socket_out",
+				Address:   "sys_socket",
+				Fetchargs: "fd=%ax",
+			},
+			alloc: func() interface{} {
+				return new(socketRetEvent)
+			},
+		},
+		{
+			probe: tracing.Probe{
+				Name:      "sys_close_in",
+				Address:   "sys_close",
+				Fetchargs: "fd=%di",
+			},
+			alloc: func() interface{} {
+				return new(closeEvent)
+			},
+		},
+		{
+			probe: tracing.Probe{
+				Type:      tracing.TypeKRetProbe,
+				Name:      "accept_out",
+				Address:   "sys_accept",
+				Fetchargs: "fd=%ax",
+			},
+			alloc: func() interface{} {
+				return new(acceptRetEvent)
+			},
+		},*/
+
+	{
 		probe: tracing.Probe{
-			//Type:      tracing.TypeKRetProbe,
-			Name:      "sys_socket_in",
-			Address:   "sys_socket",
-			Fetchargs: "domain=%di type=%si protocol=%dx",
-			Filter:    interpolate("(domain=={{.AF_INET}} || domain=={{.AF_INET6}}) && type=={{.SOCK_STREAM}}"),
+			Name:      "tcp4_connect_in",
+			Address:   "tcp_v4_connect",
+			Fetchargs: "af=+{{.SOCKADDR_IN_AF}}(%si):u16 addr=+{{.SOCKADDR_IN_ADDR}}(%si):u32 port=+{{.SOCKADDR_IN_PORT}}(%si):u16",
+			Filter:    "af=={{.AF_INET}}",
 		},
 		alloc: func() interface{} {
-			return new(socketEvent)
+			return new(tcpV4ConnectCall)
 		},
 	},
 	{
 		probe: tracing.Probe{
 			Type:      tracing.TypeKRetProbe,
-			Name:      "sys_socket_out",
-			Address:   "sys_socket",
-			Fetchargs: "fd=%ax",
+			Name:      "tcp4_connect_out",
+			Address:   "tcp_v4_connect",
+			Fetchargs: "retval=%ax",
 		},
 		alloc: func() interface{} {
-			return new(socketRetEvent)
+			return new(tcpV4ConnectResult)
 		},
 	},
-	{
+
+	/*{
+		// inet_bind is for explicit bind(...) calls, not useful
 		probe: tracing.Probe{
-			Name:      "sys_close_in",
-			Address:   "sys_close",
-			Fetchargs: "fd=%di",
+			Name:      "inet_bind4_in",
+			Address:   "inet_bind",
+			Fetchargs: "af=+{{.SOCKADDR_IN_AF}}(%si):u16 addr=+{{.SOCKADDR_IN_ADDR}}(%si):u32 port=+{{.SOCKADDR_IN_PORT}}(%si):u16",
+			Filter:    "af=={{.AF_INET}}",
 		},
 		alloc: func() interface{} {
-			return new(closeEvent)
+			return new(bind4Call)
 		},
-	},
-	{
-		probe: tracing.Probe{
-			Type:      tracing.TypeKRetProbe,
-			Name:      "accept_out",
-			Address:   "sys_accept",
-			Fetchargs: "fd=%ax",
-		},
-		alloc: func() interface{} {
-			return new(acceptRetEvent)
-		},
-	},
+	},*/
 }
 
 func interpolate(s string) string {
@@ -81,11 +118,30 @@ func interpolate(s string) string {
 	return buf.String()
 }
 
+func merge(dest map[string]interface{}, src map[string]interface{}) error {
+	for k, v := range src {
+		if prev, found := dest[k]; found {
+			return fmt.Errorf("attempt to redefine key '%s'. previous value:'%s' new value:'%s'", k, prev, v)
+		}
+		dest[k] = v
+	}
+	return nil
+}
+
 func registerProbe(
 	probe tracing.Probe,
 	allocator tracing.AllocateFn,
 	debugFS *tracing.TraceFS,
 	channel *tracing.PerfChannel) error {
+
+	// TODO CHECKS:
+	// - Probe name/group can't have a slash '-'
+	// - Use of xNN types
+	// - Use of string types
+	// - Use of $comm
+
+	probe.Fetchargs = interpolate(probe.Fetchargs)
+	probe.Filter = interpolate(probe.Filter)
 
 	err := debugFS.AddKProbe(probe)
 	if err != nil {
@@ -114,12 +170,17 @@ func main() {
 	if err := debugFS.RemoveAllKProbes(); err != nil {
 		panic(err)
 	}
+	defer debugFS.RemoveAllKProbes()
 
 	offSockAddrIn, err := Guess(debugFS, guessStructSockAddrIn)
 	if err != nil {
 		panic(err)
 	}
 	_, _ = fmt.Fprintf(os.Stderr, "Guessed offsets for struct sockaddr_in: %+v\n", offSockAddrIn)
+
+	if err := merge(constants, offSockAddrIn); err != nil {
+		panic(err)
+	}
 
 	channel, err := tracing.NewPerfChannel(
 		tracing.WithBufferSize(4096),

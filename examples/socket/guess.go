@@ -12,8 +12,8 @@ import (
 )
 
 // GuessResult stores the output of a Guess operation as a map of string keys
-// and integer values, usually offsets.
-type GuessResult map[string]int
+// and arbitrary values, usually offsets.
+type GuessResult map[string]interface{}
 
 // GuessAction is the representation of a guess to perform.
 type GuessAction struct {

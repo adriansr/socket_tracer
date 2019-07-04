@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"strings"
 	"unsafe"
 )
 
@@ -252,4 +253,56 @@ func (d *structDecoder) Decode(raw []byte, meta Metadata) (s interface{}, err er
 	}
 
 	return s, nil
+}
+
+type dumpDecoder struct {
+	start int
+	end   int
+}
+
+// NewDumpDecoder returns a new decoder that will dump all the arguments
+// as a byte slice. Useful for memory dumps. Arguments must be:
+// - unnamed, so they get an automatic argNN name.
+// - integer of 64bit (u64 / s64).
+// - dump consecutive memory.
+func NewDumpDecoder(format ProbeDescription) (Decoder, error) {
+	var fields []Field
+	for name, field := range format.Fields {
+		if strings.Index(name, "arg") != 0 {
+			continue
+		}
+		if field.Type != FieldTypeInteger {
+			return nil, fmt.Errorf("field '%s' is not an integer", name)
+		}
+		if field.Size != 8 {
+			return nil, fmt.Errorf("field '%s' length is not 8", name)
+		}
+		fields = append(fields, field)
+	}
+	if len(fields) == 0 {
+		return nil, errors.New("no fields to decode")
+	}
+	sort.Slice(fields, func(i, j int) bool {
+		return fields[i].Offset < fields[j].Offset
+	})
+
+	base := fields[0].Offset
+	end := base
+	for _, field := range fields {
+		if field.Offset != end {
+			return nil, fmt.Errorf("gap before field '%s'", field.Name)
+		}
+		end += field.Size
+	}
+	return &dumpDecoder{
+		start: base,
+		end:   end,
+	}, nil
+}
+
+func (d *dumpDecoder) Decode(raw []byte, _ Metadata) (interface{}, error) {
+	if len(raw) < d.end {
+		return nil, errors.New("record too short for dump")
+	}
+	return append([]byte(nil), raw[d.start:d.end]...), nil
 }
