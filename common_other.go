@@ -29,23 +29,23 @@ func readInt(ptr unsafe.Pointer, len uint8, signed bool) (value interface{}, err
 		}
 	case 2:
 		if signed {
-			value = int16(machineEndian.Uint16(asSlice))
+			value = int16(MachineEndian.Uint16(asSlice))
 		} else {
-			value = machineEndian.Uint16(asSlice)
+			value = MachineEndian.Uint16(asSlice)
 		}
 
 	case 4:
 		if signed {
-			value = int32(machineEndian.Uint32(asSlice))
+			value = int32(MachineEndian.Uint32(asSlice))
 		} else {
-			value = machineEndian.Uint32(asSlice)
+			value = MachineEndian.Uint32(asSlice)
 		}
 
 	case 8:
 		if signed {
-			value = int64(machineEndian.Uint64(asSlice))
+			value = int64(MachineEndian.Uint64(asSlice))
 		} else {
-			value = machineEndian.Uint64(asSlice)
+			value = MachineEndian.Uint64(asSlice)
 		}
 
 	default:

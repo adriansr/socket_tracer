@@ -9,7 +9,7 @@ import (
 	"unsafe"
 )
 
-var machineEndian = getCPUEndianness()
+var MachineEndian = getCPUEndianness()
 
 func getCPUEndianness() binary.ByteOrder {
 	myInt32 := new(uint32)

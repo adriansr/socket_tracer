@@ -115,6 +115,12 @@ func main() {
 		panic(err)
 	}
 
+	offSockAddrIn, err := guessStructSockaddrIn(debugFS)
+	if err != nil {
+		panic(err)
+	}
+	_, _ = fmt.Fprintf(os.Stderr, "Guessed offsets for struct sockaddr_in: %+v\n", offSockAddrIn)
+
 	channel, err := tracing.NewPerfChannel(
 		tracing.WithBufferSize(4096),
 		tracing.WithErrBufferSize(1),
@@ -160,7 +166,7 @@ func main() {
 			v.Update(&st)
 
 		case err := <-channel.ErrC():
-			fmt.Fprintf(os.Stderr, "Err received from channel: %v\n", err)
+			_, _ = fmt.Fprintf(os.Stderr, "Err received from channel: %v\n", err)
 			active = false
 
 		case numLost := <-channel.LostC():
