@@ -172,13 +172,7 @@ func main() {
 	}
 	defer debugFS.RemoveAllKProbes()
 
-	offSockAddrIn, err := Guess(debugFS, guessStructSockAddrIn)
-	if err != nil {
-		panic(err)
-	}
-	_, _ = fmt.Fprintf(os.Stderr, "Guessed offsets for struct sockaddr_in: %+v\n", offSockAddrIn)
-
-	if err := merge(constants, offSockAddrIn); err != nil {
+	if err := GuessAll(debugFS, constants); err != nil {
 		panic(err)
 	}
 
