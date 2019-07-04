@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"net"
@@ -32,7 +33,15 @@ var guesses = []GuessAction{
 			return tracing.NewDumpDecoder(description)
 		},
 
-		Validate: func(ev interface{}) (GuessResult, bool) {
+		Prepare: func() (ctx interface{}, err error) {
+			return net.TCPAddr{
+				IP:   net.IPv4(magicIPv4>>24, (magicIPv4>>16)&0xff, (magicIPv4>>8)&0xff, magicIPv4&0xff).To4(),
+				Port: magicPort,
+			}, nil
+		},
+
+		Validate: func(ev interface{}, ctx interface{}) (GuessResult, bool) {
+			magic := ctx.(net.TCPAddr)
 			arr := ev.([]byte)
 			N := len(arr)
 			if N < 32 {
@@ -44,7 +53,7 @@ var guesses = []GuessAction{
 
 			var off int
 			for off = 2; off <= N-2; off += 2 {
-				if binary.BigEndian.Uint16(arr[off:]) == magicPort {
+				if binary.BigEndian.Uint16(arr[off:]) == uint16(magic.Port) {
 					break
 				}
 			}
@@ -54,7 +63,7 @@ var guesses = []GuessAction{
 			offsetOfPort := off
 
 			for off = 2; off <= N-4; off += 2 {
-				if binary.BigEndian.Uint32(arr[off:]) == magicIPv4 {
+				if bytes.Equal(arr[off:off+4], magic.IP) {
 					break
 				}
 			}
@@ -70,13 +79,10 @@ var guesses = []GuessAction{
 			}, true
 		},
 
-		Trigger: func(timeout time.Duration) {
+		Trigger: func(timeout time.Duration, ctx interface{}) {
+			addr := ctx.(net.TCPAddr)
 			dialer := net.Dialer{
 				Timeout: timeout,
-			}
-			addr := net.TCPAddr{
-				IP:   net.IPv4(magicIPv4>>24, (magicIPv4>>16)&0xff, (magicIPv4>>8)&0xff, magicIPv4&0xff),
-				Port: magicPort,
 			}
 			conn, err := dialer.Dial("tcp", addr.String())
 			if err == nil {
