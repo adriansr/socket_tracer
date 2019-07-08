@@ -81,7 +81,7 @@ var probes = []struct {
 		probe: tracing.Probe{
 			Name:      "tcp4_connect_in",
 			Address:   "tcp_v4_connect",
-			Fetchargs: "laddr=+{{.INET_SOCK_LADDR}}(%di):u32 lport=+{{.INET_SOCK_LPORT}}(%di):u16 af=+{{.SOCKADDR_IN_AF}}(%si):u16 addr=+{{.SOCKADDR_IN_ADDR}}(%si):u32 port=+{{.SOCKADDR_IN_PORT}}(%si):u16",
+			Fetchargs: "sock=%di laddr=+{{.INET_SOCK_LADDR}}(%di):u32 lport=+{{.INET_SOCK_LPORT}}(%di):u16 af=+{{.SOCKADDR_IN_AF}}(%si):u16 addr=+{{.SOCKADDR_IN_ADDR}}(%si):u32 port=+{{.SOCKADDR_IN_PORT}}(%si):u16",
 			Filter:    "af=={{.AF_INET}}",
 		},
 		alloc: func() interface{} {
@@ -112,6 +112,109 @@ var probes = []struct {
 			return new(bind4Call)
 		},
 	},*/
+	{
+		probe: tracing.Probe{
+			Name:      "tcp_v4_init_sock",
+			Address:   "tcp_v4_init_sock", // can't fail, no need for retval
+			Fetchargs: "sock=%di",
+		},
+		alloc: func() interface{} {
+			return new(tcpv4InitSock)
+		},
+	},
+	{
+		probe: tracing.Probe{
+			Name:      "inet_csk_accept_in",
+			Address:   "inet_csk_accept",
+			Fetchargs: "sock=%di laddr=+{{.INET_SOCK_LADDR}}(%di):u32 lport=+{{.INET_SOCK_LPORT}}(%di):u16",
+		},
+		alloc: func() interface{} {
+			return new(tcpAcceptCall)
+		},
+	},
+	{
+		probe: tracing.Probe{
+			Type:      tracing.TypeKRetProbe,
+			Name:      "inet_csk_accept_out",
+			Address:   "inet_csk_accept",
+			Fetchargs: "sock=%ax raddr=+{{.INET_SOCK_LADDR}}(%ax):u32 rport=+{{.INET_SOCK_LPORT}}(%ax):u16",
+		},
+		alloc: func() interface{} {
+			return new(tcpAcceptResult)
+		},
+	},
+	{
+		probe: tracing.Probe{
+			Name:      "tcp_set_state",
+			Address:   "tcp_set_state",
+			Fetchargs: "sock=%di state=%si",
+		},
+		alloc: func() interface{} {
+			return new(tcpSetStateCall)
+		},
+	},
+	{
+		// TODO: tcp_sendmsg arguments may not be stable between kernels!
+		//       2.6 has 1st unused arg (stripped?) and struct socket * instead of struct sock *
+		probe: tracing.Probe{
+			Name:      "tcp_sendmsg_in",
+			Address:   "tcp_sendmsg",
+			Fetchargs: "sock=%di size=%dx laddr=+{{.INET_SOCK_LADDR}}(%di):u32 lport=+{{.INET_SOCK_LPORT}}(%di):u16 raddr=+{{.INET_SOCK_RADDR}}(%di):u32 rport=+{{.INET_SOCK_RPORT}}(%di):u16",
+			// TODO: development remove!
+			//       ignoring local 22 port
+			Filter: "lport!=0x1600",
+		},
+		alloc: func() interface{} {
+			return new(tcpSendMsgCall)
+		},
+	},
+	{
+		// This probe is for counting sent IPv4 packets.
+		// If for some reason we want to only count TCP data packets and ignore
+		// ACKs & company, we need to monitor tcp_push or similar.
+		//
+		// Also: This might not account for TSO. A single call to ip_local_out
+		//       could result in multiple packets being sent.
+		probe: tracing.Probe{
+			Name:      "ip_local_out_call",
+			Address:   "ip_local_out",
+			Fetchargs: "sock=%si",
+		},
+		alloc: func() interface{} {
+			return new(ipLocalOutCall)
+		},
+	},
+
+	{
+		// This probe is for counting sent IPv4 packets.
+		// If for some reason we want to only count TCP data packets and ignore
+		// ACKs & company, we need to monitor tcp_push or similar.
+		//
+		// Also: This might not account for TSO. A single call to ip_local_out
+		//       could result in multiple packets being sent.
+		probe: tracing.Probe{
+			Name:      "tcp_v4_do_rcv_call",
+			Address:   "tcp_v4_do_rcv",
+			Fetchargs: "sock=%di",
+		},
+		alloc: func() interface{} {
+			return new(tcpV4DoRcv)
+		},
+	},
+
+	{
+		probe: tracing.Probe{
+			Name:      "tcp_rcv_established",
+			Address:   "tcp_rcv_established",
+			Fetchargs: "sock=%di size=%cx laddr=+{{.INET_SOCK_LADDR}}(%di):u32 lport=+{{.INET_SOCK_LPORT}}(%di):u16 raddr=+{{.INET_SOCK_RADDR}}(%di):u32 rport=+{{.INET_SOCK_RPORT}}(%di):u16",
+			// TODO: development remove!
+			//       ignoring local 22 port
+			Filter: "lport!=0x1600",
+		},
+		alloc: func() interface{} {
+			return new(tcpRcvEstablished)
+		},
+	},
 }
 
 func interpolate(s string) string {
@@ -155,7 +258,6 @@ func registerProbe(
 	if err != nil {
 		return errors.Wrapf(err, "unable to get format of probe %s", probe.String())
 	}
-
 	decoder, err := tracing.NewStructDecoder(desc, allocator)
 	if err != nil {
 		return errors.Wrapf(err, "unable to build decoder for probe %s", probe.String())

@@ -43,6 +43,7 @@ type acceptRetEvent struct {
 
 type tcpV4ConnectCall struct {
 	Meta  tracing.Metadata `kprobe:"metadata"`
+	Sock  uintptr          `kprobe:"sock"`
 	LAddr uint32           `kprobe:"laddr"`
 	LPort uint16           `kprobe:"lport"`
 	RAddr uint32           `kprobe:"addr"`
@@ -58,6 +59,195 @@ type bind4Call struct {
 	Meta    tracing.Metadata `kprobe:"metadata"`
 	Address uint32           `kprobe:"addr"`
 	Port    uint16           `kprobe:"port"`
+}
+
+type tcpSetStateCall struct {
+	Meta  tracing.Metadata `kprobe:"metadata"`
+	Sock  uintptr          `kprobe:"sock"`
+	State int              `kprobe:"state"`
+}
+
+type tcpv4InitSock struct {
+	Meta tracing.Metadata `kprobe:"metadata"`
+	Sock uintptr          `kprobe:"sock"`
+}
+
+type tcpAcceptCall struct {
+	Meta  tracing.Metadata `kprobe:"metadata"`
+	Sock  uintptr          `kprobe:"sock"`
+	LAddr uint32           `kprobe:"laddr"`
+	LPort uint16           `kprobe:"lport"`
+}
+
+type tcpAcceptResult struct {
+	Meta  tracing.Metadata `kprobe:"metadata"`
+	Sock  uintptr          `kprobe:"sock"`
+	RAddr uint32           `kprobe:"raddr"`
+	RPort uint16           `kprobe:"rport"`
+}
+
+type tcpSendMsgCall struct {
+	Meta  tracing.Metadata `kprobe:"metadata"`
+	Sock  uintptr          `kprobe:"sock"`
+	Size  uintptr          `kprobe:"size"`
+	LAddr uint32           `kprobe:"laddr"`
+	LPort uint16           `kprobe:"lport"`
+	RAddr uint32           `kprobe:"raddr"`
+	RPort uint16           `kprobe:"rport"`
+}
+
+type ipLocalOutCall struct {
+	Meta tracing.Metadata `kprobe:"metadata"`
+	Sock uintptr          `kprobe:"sock"`
+}
+
+type tcpV4DoRcv struct {
+	Meta tracing.Metadata `kprobe:"metadata"`
+	Sock uintptr          `kprobe:"sock"`
+}
+
+type tcpRcvEstablished struct {
+	Meta  tracing.Metadata `kprobe:"metadata"`
+	Sock  uintptr          `kprobe:"sock"`
+	Size  int              `kprobe:"size"`
+	LAddr uint32           `kprobe:"laddr"`
+	LPort uint16           `kprobe:"lport"`
+	RAddr uint32           `kprobe:"raddr"`
+	RPort uint16           `kprobe:"rport"`
+}
+
+var tcpStates = []string{
+	"(zero)",
+	"TCP_ESTABLISHED",
+	"TCP_SYN_SENT",
+	"TCP_SYN_RECV",
+	"TCP_FIN_WAIT1",
+	"TCP_FIN_WAIT2",
+	"TCP_TIME_WAIT",
+	"TCP_CLOSE",
+	"TCP_CLOSE_WAIT",
+	"TCP_LAST_ACK",
+	"TCP_LISTEN",
+	"TCP_CLOSING",
+	"TCP_NEW_SYN_RECV",
+}
+
+func (e *tcpSendMsgCall) String() string {
+	var buf [4]byte
+	tracing.MachineEndian.PutUint32(buf[:], e.LAddr)
+	laddr := net.IPv4(buf[0], buf[1], buf[2], buf[3])
+	tracing.MachineEndian.PutUint16(buf[:], e.LPort)
+	lport := binary.BigEndian.Uint16(buf[:])
+	tracing.MachineEndian.PutUint32(buf[:], e.RAddr)
+	raddr := net.IPv4(buf[0], buf[1], buf[2], buf[3])
+	tracing.MachineEndian.PutUint16(buf[:], e.RPort)
+	rport := binary.BigEndian.Uint16(buf[:])
+	return fmt.Sprintf(
+		"%s tcp_sendmsg(sock=0x%x, len=%d, %s:%d -> %s:%d)",
+		header(e.Meta),
+		e.Sock,
+		e.Size,
+		laddr.String(),
+		lport,
+		raddr.String(),
+		rport)
+}
+
+func (e *tcpSendMsgCall) Update(*state) {
+	// TODO
+}
+
+func (e *ipLocalOutCall) String() string {
+	return fmt.Sprintf(
+		"%s ip_local_out(sock=0x%x)",
+		header(e.Meta),
+		e.Sock)
+}
+
+func (e *ipLocalOutCall) Update(*state) {
+	// TODO
+}
+
+func (e *tcpV4DoRcv) String() string {
+	return fmt.Sprintf(
+		"%s tcp_v4_do_rcv(sock=0x%x)",
+		header(e.Meta),
+		e.Sock)
+}
+
+func (e *tcpV4DoRcv) Update(*state) {
+	// TODO
+}
+
+func (e *tcpRcvEstablished) String() string {
+	var buf [4]byte
+	tracing.MachineEndian.PutUint32(buf[:], e.LAddr)
+	laddr := net.IPv4(buf[0], buf[1], buf[2], buf[3])
+	tracing.MachineEndian.PutUint16(buf[:], e.LPort)
+	lport := binary.BigEndian.Uint16(buf[:])
+	tracing.MachineEndian.PutUint32(buf[:], e.RAddr)
+	raddr := net.IPv4(buf[0], buf[1], buf[2], buf[3])
+	tracing.MachineEndian.PutUint16(buf[:], e.RPort)
+	rport := binary.BigEndian.Uint16(buf[:])
+	return fmt.Sprintf(
+		"%s tcp_recv_established(sock=0x%x, size=%d, %s:%d <- %s:%d)",
+		header(e.Meta),
+		e.Sock,
+		e.Size,
+		laddr.String(),
+		lport,
+		raddr.String(),
+		rport)
+}
+
+func (e *tcpRcvEstablished) Update(*state) {
+	// TODO
+}
+
+func (e *tcpAcceptCall) String() string {
+	var buf [4]byte
+	tracing.MachineEndian.PutUint32(buf[:], e.LAddr)
+	laddr := net.IPv4(buf[0], buf[1], buf[2], buf[3])
+	tracing.MachineEndian.PutUint16(buf[:], e.LPort)
+	lport := binary.BigEndian.Uint16(buf[:])
+	return fmt.Sprintf("%s accept(sock=0x%x, laddr=%s, lport=%d)", header(e.Meta), e.Sock, laddr.String(), lport)
+}
+
+func (e *tcpAcceptCall) Update(*state) {
+	//panic("implement me")
+}
+
+func (e *tcpAcceptResult) String() string {
+	var buf [4]byte
+	tracing.MachineEndian.PutUint32(buf[:], e.RAddr)
+	raddr := net.IPv4(buf[0], buf[1], buf[2], buf[3])
+	tracing.MachineEndian.PutUint16(buf[:], e.RPort)
+	rport := binary.BigEndian.Uint16(buf[:])
+	return fmt.Sprintf("%s <- accept(sock=0x%x, raddr=%s, rport=%d)", header(e.Meta), e.Sock, raddr.String(), rport)
+}
+
+func (e *tcpAcceptResult) Update(*state) {
+	//panic("implement me")
+}
+
+func (e *tcpSetStateCall) String() string {
+	ss := fmt.Sprintf("(unknown:%d)", e.State)
+	if e.State < len(tcpStates) {
+		ss = tcpStates[e.State]
+	}
+	return fmt.Sprintf("%s state(sock=0x%x) %s", header(e.Meta), e.Sock, ss)
+}
+
+func (e *tcpSetStateCall) Update(*state) {
+	//panic("implement me")
+}
+
+func (e *tcpv4InitSock) String() string {
+	return fmt.Sprintf("%s tcp_v4_init_sock(sock=0x%x)", header(e.Meta), e.Sock)
+}
+
+func (e *tcpv4InitSock) Update(*state) {
+	//panic("implement me")
 }
 
 func (e *tcpV4ConnectResult) String() string {
@@ -79,8 +269,9 @@ func (e *tcpV4ConnectCall) String() string {
 	tracing.MachineEndian.PutUint16(buf[:], e.RPort)
 	rport := binary.BigEndian.Uint16(buf[:])
 	return fmt.Sprintf(
-		"%s connect(%s:%d -> %s:%d)",
+		"%s connect(sock=0x%x, %s:%d -> %s:%d)",
 		header(e.Meta),
+		e.Sock,
 		laddr.String(),
 		lport,
 		raddr.String(),
