@@ -31,11 +31,6 @@ type MultiGuessAction struct {
 }
 
 type inetSockCtx struct {
-	fd            int
-	local, remote unix.SockaddrInet4
-}
-
-type inetSockCtx2 struct {
 	local, remote  unix.SockaddrInet4
 	server, client int
 }
@@ -154,7 +149,7 @@ var guesses = []interface{}{
 					}
 					return fd, *addrptr, nil
 				}
-				myCtx := inetSockCtx2{
+				myCtx := inetSockCtx{
 					local: unix.SockaddrInet4{
 						Port: 0,
 						Addr: randomLocalIP(),
@@ -180,13 +175,13 @@ var guesses = []interface{}{
 			},
 
 			Terminate: func(ctx interface{}) {
-				myCtx := ctx.(inetSockCtx2)
+				myCtx := ctx.(inetSockCtx)
 				unix.Close(myCtx.client)
 				unix.Close(myCtx.server)
 			},
 
 			Validate: func(ev interface{}, ctx interface{}) (GuessResult, bool) {
-				myCtx := ctx.(inetSockCtx2)
+				myCtx := ctx.(inetSockCtx)
 				data := ev.([]byte)
 				//_, _ = fmt.Fprintf(os.Stderr, "dump: %s:%x -> %s:%x\n%s\n", hex.EncodeToString(myCtx.local.Addr[:]), myCtx.local.Port, hex.EncodeToString(myCtx.remote.Addr[:]), myCtx.remote.Port, hex.Dump(data))
 				//return nil, true
@@ -239,7 +234,7 @@ var guesses = []interface{}{
 			},
 
 			Trigger: func(timeout time.Duration, ctx interface{}) {
-				myCtx := ctx.(inetSockCtx2)
+				myCtx := ctx.(inetSockCtx)
 				// TODO error check
 				if err := unix.Connect(myCtx.client, &myCtx.local); err != nil {
 					return

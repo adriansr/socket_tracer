@@ -29,54 +29,6 @@ var probes = []struct {
 	probe tracing.Probe
 	alloc tracing.AllocateFn
 }{
-	/*
-		{
-			// x86_64 : %rdi, %rsi, %rdx, %rcx, %r8 and %r9. The kernel interface uses %rdi, %rsi, %rdx, %r10, %r8 and %r9.
-
-			probe: tracing.Probe{
-				//Type:      tracing.TypeKRetProbe,
-				Name:      "sys_socket_in",
-				Address:   "sys_socket",
-				Fetchargs: "domain=%di type=%si protocol=%dx",
-				Filter:    "(domain=={{.AF_INET}} || domain=={{.AF_INET6}}) && type=={{.SOCK_STREAM}}",
-			},
-			alloc: func() interface{} {
-				return new(socketEvent)
-			},
-		},
-		{
-			probe: tracing.Probe{
-				Type:      tracing.TypeKRetProbe,
-				Name:      "sys_socket_out",
-				Address:   "sys_socket",
-				Fetchargs: "fd=%ax",
-			},
-			alloc: func() interface{} {
-				return new(socketRetEvent)
-			},
-		},
-		{
-			probe: tracing.Probe{
-				Name:      "sys_close_in",
-				Address:   "sys_close",
-				Fetchargs: "fd=%di",
-			},
-			alloc: func() interface{} {
-				return new(closeEvent)
-			},
-		},
-		{
-			probe: tracing.Probe{
-				Type:      tracing.TypeKRetProbe,
-				Name:      "accept_out",
-				Address:   "sys_accept",
-				Fetchargs: "fd=%ax",
-			},
-			alloc: func() interface{} {
-				return new(acceptRetEvent)
-			},
-		},*/
-
 	{
 		probe: tracing.Probe{
 			Name:      "tcp4_connect_in",
@@ -100,18 +52,6 @@ var probes = []struct {
 		},
 	},
 
-	/*{
-		// inet_bind is for explicit bind(...) calls, not useful
-		probe: tracing.Probe{
-			Name:      "inet_bind4_in",
-			Address:   "inet_bind",
-			Fetchargs: "af=+{{.SOCKADDR_IN_AF}}(%si):u16 addr=+{{.SOCKADDR_IN_ADDR}}(%si):u32 port=+{{.SOCKADDR_IN_PORT}}(%si):u16",
-			Filter:    "af=={{.AF_INET}}",
-		},
-		alloc: func() interface{} {
-			return new(bind4Call)
-		},
-	},*/
 	{
 		probe: tracing.Probe{
 			Name:      "tcp_v4_init_sock",
