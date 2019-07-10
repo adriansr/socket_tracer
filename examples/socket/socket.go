@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"os/signal"
 	"text/template"
 	"time"
 
@@ -326,18 +327,24 @@ func main() {
 	done := make(chan struct{}, 0)
 	defer close(done)
 
-	output := stats{
-		output: make(chan string, 1024),
-	}
-	st := NewState(&output)
-	go output.Run(time.Second/4, done)
+	output := NewStats(time.Second / 4)
+	defer output.Close()
+
+	st := NewState(output)
 
 	if err := channel.Run(); err != nil {
 		panic(err)
 	}
 
-	for active := true; active; {
+	sigC := make(chan os.Signal, 1)
+	defer close(sigC)
+	signal.Notify(sigC, os.Interrupt)
+
+	for running := true; running; {
 		select {
+		case <-sigC:
+			running = false
+
 		case iface, ok := <-channel.C():
 			if !ok {
 				break
@@ -352,7 +359,7 @@ func main() {
 
 		case err := <-channel.ErrC():
 			_, _ = fmt.Fprintf(os.Stderr, "Err received from channel: %v\n", err)
-			active = false
+			running = false
 
 		case numLost := <-channel.LostC():
 			output.Lost(numLost)
