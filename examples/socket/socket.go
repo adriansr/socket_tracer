@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"text/template"
 	"time"
+	"unsafe"
 
 	"github.com/pkg/errors"
 	"golang.org/x/sys/unix/linux/perf"
@@ -30,6 +31,43 @@ var probes = []struct {
 	probe tracing.Probe
 	alloc tracing.AllocateFn
 }{
+
+	/***************************************************************************
+	 * RUNNING PROCESSES
+	 **************************************************************************/
+
+	{
+		probe: tracing.Probe{
+			Name:    "SyS_execve",
+			Address: "SyS_execve",
+			Fetchargs: fmt.Sprintf("path=%s argptrs=%s param0=%s param1=%s param2=%s param3=%s param4=%s param5=%s param6=%s param7=%s",
+				makeMemoryDump("%di", 0, maxProgArgLen),                                  // path
+				makeMemoryDump("%si", 0, int((maxProgArgs+1)*unsafe.Sizeof(uintptr(0)))), // argptrs
+				makeMemoryDump("+0(%si)", 0, maxProgArgLen),                              // param0
+				makeMemoryDump("+8(%si)", 0, maxProgArgLen),                              // param1
+				makeMemoryDump("+16(%si)", 0, maxProgArgLen),                             // param2
+				makeMemoryDump("+24(%si)", 0, maxProgArgLen),                             // param3
+				makeMemoryDump("+32(%si)", 0, maxProgArgLen),                             // param4
+				makeMemoryDump("+40(%si)", 0, maxProgArgLen),                             // param5
+				makeMemoryDump("+48(%si)", 0, maxProgArgLen),                             // param6
+				makeMemoryDump("+56(%si)", 0, maxProgArgLen),                             // param7
+			),
+		},
+		alloc: func() interface{} {
+			return new(execveCall)
+		},
+	},
+
+	{
+		probe: tracing.Probe{
+			Name:    "do_exit",
+			Address: "do_exit",
+		},
+		alloc: func() interface{} {
+			return new(doExit)
+		},
+	},
+
 	/***************************************************************************
 	 * IPv4
 	 **************************************************************************/

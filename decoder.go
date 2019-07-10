@@ -9,9 +9,14 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"unsafe"
 )
+
+// This sets a limit on struct decoder's greedy fields. 2048 is not a problem
+// as the kernel tracing subsystem won't let us dump more than that anyway.
+const maxRawCopySize = 2048
 
 // Decoder decodes a raw event into an usable type.
 type Decoder interface {
@@ -149,13 +154,31 @@ func NewStructDecoder(desc ProbeDescription, allocFn AllocateFn) (Decoder, error
 	if tSample.Kind() != reflect.Struct {
 		return nil, errors.New("allocator function doesn't return a pointer to a struct")
 	}
+
+	var inFieldsByOffset map[int]Field
+
 	for i := 0; i < tSample.NumField(); i++ {
 		outField := tSample.Field(i)
-		name, found := outField.Tag.Lookup("kprobe")
+		values, found := outField.Tag.Lookup("kprobe")
 		if !found {
 			// Untagged field
 			continue
 		}
+
+		var name string
+		var greedy bool
+		for idx, param := range strings.Split(values, ",") {
+			switch param {
+			case "greedy":
+				greedy = true
+			default:
+				if idx != 0 {
+					return nil, fmt.Errorf("bad parameter '%s' in kprobe tag for field '%s'", param, outField.Name)
+				}
+				name = param
+			}
+		}
+
 		if name == "metadata" {
 			if outField.Type != reflect.TypeOf(Metadata{}) {
 				return nil, errors.New("bad type for meta field")
@@ -176,6 +199,55 @@ func NewStructDecoder(desc ProbeDescription, allocFn AllocateFn) (Decoder, error
 			return nil, fmt.Errorf("field '%s' not found in kprobe format description", name)
 		}
 
+		if greedy {
+			// When greedy is used for the first time, build a map of kprobe's
+			// fields by the offset they appear.
+			if inFieldsByOffset == nil {
+				inFieldsByOffset = make(map[int]Field)
+				for _, v := range desc.Fields {
+					inFieldsByOffset[v.Offset] = v
+				}
+			}
+
+			greedySize := uintptr(inField.Size)
+			nextOffset := inField.Offset + inField.Size
+			nextFieldID := -1
+			for {
+				nextField, found := inFieldsByOffset[nextOffset]
+				if !found {
+					break
+				}
+				if strings.Index(nextField.Name, "arg") != 0 {
+					break
+				}
+				fieldID, err := strconv.Atoi(nextField.Name[3:])
+				if err != nil {
+					break
+				}
+				if nextFieldID != -1 && nextFieldID != fieldID {
+					break
+				}
+				greedySize += uintptr(nextField.Size)
+				nextOffset += nextField.Size
+				nextFieldID = fieldID + 1
+			}
+
+			if greedySize > maxRawCopySize {
+				return nil, fmt.Errorf("greedy field '%s' exceeds limit of %d bytes", outField.Name, maxRawCopySize)
+			}
+			if curSize := outField.Type.Size(); curSize != greedySize {
+				return nil, fmt.Errorf("greedy field '%s' size is %d but greedy requires %d", outField.Name, curSize, greedySize)
+			}
+
+			dec.fields = append(dec.fields, fieldDecoder{
+				name: name,
+				typ:  FieldTypeRaw,
+				src:  uintptr(inField.Offset),
+				dst:  outField.Offset,
+				len:  greedySize,
+			})
+			continue
+		}
 		switch inField.Type {
 		case FieldTypeInteger:
 			if _, found := intFields[outField.Type.Kind()]; !found {
@@ -248,8 +320,10 @@ func (d *structDecoder) Decode(raw []byte, meta Metadata) (s interface{}, err er
 
 		case FieldTypeMeta:
 			*(*Metadata)(unsafe.Pointer(uptr + dec.dst)) = meta
-		}
 
+		case FieldTypeRaw:
+			copy((*(*[maxRawCopySize]byte)(unsafe.Pointer(uptr + dec.dst)))[:dec.len], raw[dec.src:dec.src+dec.len])
+		}
 	}
 
 	return s, nil

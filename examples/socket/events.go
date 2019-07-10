@@ -5,9 +5,11 @@
 package main
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"net"
+	"strings"
 	"syscall"
 	"time"
 
@@ -104,6 +106,72 @@ type inetSockDestruct struct {
 	Sock uintptr          `kprobe:"sock"`
 }
 
+const maxProgArgLen = 128
+const maxProgArgs = 6
+
+type execveCall struct {
+	Meta   tracing.Metadata         `kprobe:"metadata"`
+	Path   [maxProgArgLen]byte      `kprobe:"path,greedy"`
+	Ptrs   [maxProgArgs + 1]uintptr `kprobe:"argptrs,greedy"`
+	Param0 [maxProgArgLen]byte      `kprobe:"param0,greedy"`
+	Param1 [maxProgArgLen]byte      `kprobe:"param1,greedy"`
+	Param2 [maxProgArgLen]byte      `kprobe:"param2,greedy"`
+	Param3 [maxProgArgLen]byte      `kprobe:"param3,greedy"`
+	Param4 [maxProgArgLen]byte      `kprobe:"param4,greedy"`
+	Param5 [maxProgArgLen]byte      `kprobe:"param5,greedy"`
+}
+
+type doExit struct {
+	Meta tracing.Metadata `kprobe:"metadata"`
+}
+
+func getZString(buf []byte) string {
+	pos := bytes.IndexByte(buf, 0)
+	extra := ""
+	if pos == -1 {
+		pos = len(buf)
+		extra = " ..."
+	}
+	return string(buf[:pos]) + extra
+}
+
+func (e *execveCall) String() string {
+	path := getZString(e.Path[:])
+	params := [maxProgArgs][]byte{
+		e.Param0[:],
+		e.Param1[:],
+		e.Param2[:],
+		e.Param3[:],
+		e.Param4[:],
+		e.Param5[:],
+	}
+	var list [maxProgArgs]string
+	var argc int
+	for argc = 0; argc < maxProgArgs && e.Ptrs[argc] != 0; argc++ {
+		list[argc] = fmt.Sprintf("arg%d='%s'", argc, getZString(params[argc]))
+	}
+	extra := ""
+	if argc == maxProgArgs && e.Ptrs[argc] != 0 {
+		extra = " ..."
+	}
+	return fmt.Sprintf("%s execve(path='%s', %s%s)", header(e.Meta), path, strings.Join(list[:argc], " "), extra)
+}
+
+func (e *execveCall) Update(*state) {
+	// panic("implement me")
+}
+
+func (e *doExit) String() string {
+	whatExited := "process"
+	if e.Meta.PID != e.Meta.TID {
+		whatExited = "thread"
+	}
+	return fmt.Sprintf("%s do_exit(%s)", header(e.Meta), whatExited)
+}
+
+func (e *doExit) Update(*state) {
+	// panic("implement me")
+}
 func (e *inetCreateCall) String() string {
 	return fmt.Sprintf("%s inet_create(sock=0x%x, proto=%d)", header(e.Meta), e.Sock, e.Proto)
 }

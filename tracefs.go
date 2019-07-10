@@ -162,6 +162,9 @@ const (
 
 	// FieldTypeMeta describes the metadata.
 	FieldTypeMeta
+
+	// FieldTypeRaw describes a field of raw bytes.
+	FieldTypeRaw
 )
 
 // Field describes a field returned by a event tracing probe.
