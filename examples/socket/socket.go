@@ -22,7 +22,16 @@ import (
 var constants = map[string]interface{}{
 	"AF_INET":     2,
 	"AF_INET6":    10,
+	"IPPROTO_TCP": 6,
+	"IPPROTO_UDP": 17,
 	"SOCK_STREAM": 2,
+
+	// functions
+
+	// Offset for the ith element on an array of pointers,
+	"POINTER_INDEX": func(index int) int {
+		return int(unsafe.Sizeof(uintptr(0))) * index
+	},
 }
 
 var timeRef TimeReference
@@ -40,17 +49,15 @@ var probes = []struct {
 		probe: tracing.Probe{
 			Name:    "SyS_execve",
 			Address: "SyS_execve",
-			Fetchargs: fmt.Sprintf("path=%s argptrs=%s param0=%s param1=%s param2=%s param3=%s param4=%s param5=%s param6=%s param7=%s",
+			Fetchargs: fmt.Sprintf("path=%s argptrs=%s param0=%s param1=%s param2=%s param3=%s param4=%s param5=%s",
 				makeMemoryDump("%di", 0, maxProgArgLen),                                  // path
 				makeMemoryDump("%si", 0, int((maxProgArgs+1)*unsafe.Sizeof(uintptr(0)))), // argptrs
-				makeMemoryDump("+0(%si)", 0, maxProgArgLen),                              // param0
-				makeMemoryDump("+8(%si)", 0, maxProgArgLen),                              // param1
-				makeMemoryDump("+16(%si)", 0, maxProgArgLen),                             // param2
-				makeMemoryDump("+24(%si)", 0, maxProgArgLen),                             // param3
-				makeMemoryDump("+32(%si)", 0, maxProgArgLen),                             // param4
-				makeMemoryDump("+40(%si)", 0, maxProgArgLen),                             // param5
-				makeMemoryDump("+48(%si)", 0, maxProgArgLen),                             // param6
-				makeMemoryDump("+56(%si)", 0, maxProgArgLen),                             // param7
+				makeMemoryDump("+{{call .POINTER_INDEX 0}}(%si)", 0, maxProgArgLen),      // param0
+				makeMemoryDump("+{{call .POINTER_INDEX 1}}(%si)", 0, maxProgArgLen),      // param1
+				makeMemoryDump("+{{call .POINTER_INDEX 2}}(%si)", 0, maxProgArgLen),      // param2
+				makeMemoryDump("+{{call .POINTER_INDEX 3}}(%si)", 0, maxProgArgLen),      // param3
+				makeMemoryDump("+{{call .POINTER_INDEX 4}}(%si)", 0, maxProgArgLen),      // param4
+				makeMemoryDump("+{{call .POINTER_INDEX 5}}(%si)", 0, maxProgArgLen),      // param5
 			),
 		},
 		alloc: func() interface{} {
@@ -80,7 +87,7 @@ var probes = []struct {
 			Name:      "inet_create",
 			Address:   "inet_create",
 			Fetchargs: "sock=%si proto=%dx",
-			Filter:    "proto==6 || proto==17", // TCP or UDP
+			Filter:    "proto=={{.IPPROTO_TCP}} || proto=={{.IPPROTO_UDP}}",
 		},
 		alloc: func() interface{} {
 			return new(inetCreateCall)
@@ -328,6 +335,8 @@ func registerProbe(
 	if err := channel.MonitorProbe(desc, decoder); err != nil {
 		return errors.Wrapf(err, "unable to monitor probe %s", probe.String())
 	}
+
+	fmt.Fprintf(os.Stderr, "Registered probe:'%s' filter:'%s'\n", probe.String(), probe.Filter)
 	return nil
 }
 
