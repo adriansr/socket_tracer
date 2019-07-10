@@ -19,28 +19,6 @@ type event interface {
 	Update(*state)
 }
 
-type socketEvent struct {
-	Meta     tracing.Metadata `kprobe:"metadata"`
-	Domain   int              `kprobe:"domain"`
-	Type     int              `kprobe:"type"`
-	Protocol int              `kprobe:"protocol"`
-}
-
-type socketRetEvent struct {
-	Meta tracing.Metadata `kprobe:"metadata"`
-	FD   int              `kprobe:"fd"`
-}
-
-type closeEvent struct {
-	Meta tracing.Metadata `kprobe:"metadata"`
-	FD   int              `kprobe:"fd"`
-}
-
-type acceptRetEvent struct {
-	Meta tracing.Metadata `kprobe:"metadata"`
-	FD   int              `kprobe:"fd"`
-}
-
 type tcpV4ConnectCall struct {
 	Meta  tracing.Metadata `kprobe:"metadata"`
 	Sock  uintptr          `kprobe:"sock"`
@@ -55,21 +33,10 @@ type tcpV4ConnectResult struct {
 	Retval int              `kprobe:"retval"`
 }
 
-type bind4Call struct {
-	Meta    tracing.Metadata `kprobe:"metadata"`
-	Address uint32           `kprobe:"addr"`
-	Port    uint16           `kprobe:"port"`
-}
-
 type tcpSetStateCall struct {
 	Meta  tracing.Metadata `kprobe:"metadata"`
 	Sock  uintptr          `kprobe:"sock"`
 	State int              `kprobe:"state"`
-}
-
-type tcpv4InitSock struct {
-	Meta tracing.Metadata `kprobe:"metadata"`
-	Sock uintptr          `kprobe:"sock"`
 }
 
 type tcpAcceptCall struct {
@@ -116,6 +83,43 @@ type tcpRcvEstablished struct {
 	RPort uint16           `kprobe:"rport"`
 }
 
+type udpSendMsgCall struct {
+	Meta  tracing.Metadata `kprobe:"metadata"`
+	Sock  uintptr          `kprobe:"sock"`
+	Size  uintptr          `kprobe:"size"`
+	LAddr uint32           `kprobe:"laddr"`
+	LPort uint16           `kprobe:"lport"`
+	RAddr uint32           `kprobe:"raddr"`
+	RPort uint16           `kprobe:"rport"`
+}
+
+type inetCreateCall struct {
+	Meta  tracing.Metadata `kprobe:"metadata"`
+	Sock  uintptr          `kprobe:"sock"`
+	Proto int              `kprobe:"proto"`
+}
+
+type inetSockDestruct struct {
+	Meta tracing.Metadata `kprobe:"metadata"`
+	Sock uintptr          `kprobe:"sock"`
+}
+
+func (e *inetCreateCall) String() string {
+	return fmt.Sprintf("%s inet_create(sock=0x%x, proto=%d)", header(e.Meta), e.Sock, e.Proto)
+}
+
+func (e *inetCreateCall) Update(*state) {
+
+}
+
+func (e *inetSockDestruct) String() string {
+	return fmt.Sprintf("%s inet_sock_destruct(sock=0x%x)", header(e.Meta), e.Sock)
+}
+
+func (e *inetSockDestruct) Update(*state) {
+
+}
+
 var tcpStates = []string{
 	"(zero)",
 	"TCP_ESTABLISHED",
@@ -154,6 +158,31 @@ func (e *tcpSendMsgCall) String() string {
 }
 
 func (e *tcpSendMsgCall) Update(*state) {
+	// TODO
+}
+
+func (e *udpSendMsgCall) String() string {
+	var buf [4]byte
+	tracing.MachineEndian.PutUint32(buf[:], e.LAddr)
+	laddr := net.IPv4(buf[0], buf[1], buf[2], buf[3])
+	tracing.MachineEndian.PutUint16(buf[:], e.LPort)
+	lport := binary.BigEndian.Uint16(buf[:])
+	tracing.MachineEndian.PutUint32(buf[:], e.RAddr)
+	raddr := net.IPv4(buf[0], buf[1], buf[2], buf[3])
+	tracing.MachineEndian.PutUint16(buf[:], e.RPort)
+	rport := binary.BigEndian.Uint16(buf[:])
+	return fmt.Sprintf(
+		"%s udp_sendmsg(sock=0x%x, len=%d, %s:%d -> %s:%d)",
+		header(e.Meta),
+		e.Sock,
+		e.Size,
+		laddr.String(),
+		lport,
+		raddr.String(),
+		rport)
+}
+
+func (e *udpSendMsgCall) Update(*state) {
 	// TODO
 }
 
@@ -242,14 +271,6 @@ func (e *tcpSetStateCall) Update(*state) {
 	//panic("implement me")
 }
 
-func (e *tcpv4InitSock) String() string {
-	return fmt.Sprintf("%s tcp_v4_init_sock(sock=0x%x)", header(e.Meta), e.Sock)
-}
-
-func (e *tcpv4InitSock) Update(*state) {
-	//panic("implement me")
-}
-
 func (e *tcpV4ConnectResult) String() string {
 	return fmt.Sprintf("%s <- connect %s", header(e.Meta), kernErrorDesc(e.Retval))
 }
@@ -282,23 +303,6 @@ func (e *tcpV4ConnectCall) Update(*state) {
 	// TODO
 }
 
-func (e *bind4Call) String() string {
-	var buf [4]byte
-	tracing.MachineEndian.PutUint32(buf[:], e.Address)
-	addr := net.IPv4(buf[0], buf[1], buf[2], buf[3])
-	tracing.MachineEndian.PutUint16(buf[:], e.Port)
-	port := binary.BigEndian.Uint16(buf[:])
-	return fmt.Sprintf(
-		"%s bind(%s, %d)",
-		header(e.Meta),
-		addr.String(),
-		port)
-}
-
-func (e *bind4Call) Update(*state) {
-	// TODO
-}
-
 // Adjust timestamp length to always be 30 char by adding trailing zeroes to
 // subsecond field:
 // 32.86225Z --> 32.862250000Z
@@ -326,36 +330,6 @@ func header(meta tracing.Metadata) string {
 		meta.TID)
 }
 
-func (e *socketEvent) String() string {
-	return fmt.Sprintf(
-		"%s socket(%d, %d, %d)",
-		header(e.Meta),
-		e.Domain,
-		e.Type,
-		e.Protocol)
-}
-
-func (e *socketEvent) Update(s *state) {
-	s.ThreadEnter(e.Meta.TID, e)
-}
-
-func (e *acceptRetEvent) String() string {
-	return fmt.Sprintf(
-		"%s accept()",
-		header(e.Meta))
-}
-
-func (e *acceptRetEvent) Update(s *state) {
-
-}
-
-func (e *closeEvent) String() string {
-	return fmt.Sprintf(
-		"%s close(%d)",
-		header(e.Meta),
-		e.FD)
-}
-
 func kernErrorDesc(retval int) string {
 	switch {
 	case retval < 0:
@@ -366,27 +340,4 @@ func kernErrorDesc(retval int) string {
 	default:
 		return fmt.Sprintf("ok (value=%d)", retval)
 	}
-}
-
-func (e *closeEvent) Update(s *state) {
-	s.SocketClose(e.Meta.PID, e.FD)
-}
-
-func (e *socketRetEvent) String() string {
-	if e.FD < 0 {
-		errno := syscall.Errno(0 - e.FD)
-		return fmt.Sprintf("%s socket failed errno=%d (%s)", header(e.Meta), errno, errno.Error())
-	}
-	return fmt.Sprintf("%s socket fd=%d", header(e.Meta), e.FD)
-}
-
-func (e *socketRetEvent) Update(s *state) {
-	args := s.ThreadLeave(e.Meta.TID)
-	if args == nil {
-		return
-	}
-	s.SocketCreate(&socket{
-		pid: e.Meta.PID,
-		fd:  e.FD,
-	})
 }

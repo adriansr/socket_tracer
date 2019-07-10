@@ -29,6 +29,44 @@ var probes = []struct {
 	probe tracing.Probe
 	alloc tracing.AllocateFn
 }{
+	/***************************************************************************
+	 * IPv4
+	 **************************************************************************/
+
+	// IPv4/TCP/UDP socket created. Good for associating socks with pids.
+	//
+	//  " inet_create(sock=0xffff9f1ddadb8080, proto=17) "
+	{
+		probe: tracing.Probe{
+			Name:      "inet_create",
+			Address:   "inet_create",
+			Fetchargs: "sock=%si proto=%dx",
+			Filter:    "proto==6 || proto==17", // TCP or UDP
+		},
+		alloc: func() interface{} {
+			return new(inetCreateCall)
+		},
+	},
+
+	// IPv4 socket destructed. Good for terminating flows.
+	// void return value.
+	//
+	//  " inet_create(sock=0xffff9f1ddadb8080, proto=17) "
+	{
+		probe: tracing.Probe{
+			Name:      "inet_sock_destruct",
+			Address:   "inet_sock_destruct",
+			Fetchargs: "sock=%di",
+		},
+		alloc: func() interface{} {
+			return new(inetSockDestruct)
+		},
+	},
+
+	/***************************************************************************
+	 * IPv4 / TCP
+	 **************************************************************************/
+
 	// An IPv4 / TCP socket connect attempt:
 	//
 	//  " connect(sock=0xffff9f1ddd216040, 0.0.0.0:0 -> 151.101.66.217:443) "
@@ -56,21 +94,6 @@ var probes = []struct {
 		},
 		alloc: func() interface{} {
 			return new(tcpV4ConnectResult)
-		},
-	},
-
-	// IPv4/TCP socket created. Good for associating socks with pids. Void retval.
-	// Good for client & server socks, but not socks returned by accept().
-	//
-	//  " tcp_v4_init_sock(sock=0xffff9f1ddd216040) "
-	{
-		probe: tracing.Probe{
-			Name:      "tcp_v4_init_sock",
-			Address:   "tcp_v4_init_sock", // can't fail, no need for retval
-			Fetchargs: "sock=%di",
-		},
-		alloc: func() interface{} {
-			return new(tcpv4InitSock)
 		},
 	},
 
@@ -194,6 +217,28 @@ var probes = []struct {
 			return new(tcpRcvEstablished)
 		},
 	},
+
+	/***************************************************************************
+	 * IPv4 / UDP
+	 **************************************************************************/
+
+	/* UDP (IPv4 only?) send datagram. Good for counting payload bytes.
+	   Also this should always be a packet. If we find a way to count packets
+	   Here and ignore ip_local_out for UDP, it might avoid large-offload issues.
+	*/
+	{
+		probe: tracing.Probe{
+			Name:      "udp_sendmsg_in",
+			Address:   "udp_sendmsg",
+			Fetchargs: "sock=%di size=%dx laddr=+{{.INET_SOCK_LADDR}}(%di):u32 lport=+{{.INET_SOCK_LPORT}}(%di):u16 raddr=+{{.INET_SOCK_RADDR}}(%di):u32 rport=+{{.INET_SOCK_RPORT}}(%di):u16",
+		},
+		alloc: func() interface{} {
+			return new(udpSendMsgCall)
+		},
+	},
+
+	// TODO: udp_destroy_sock
+	// TODO: inet_sock_destruct
 }
 
 func interpolate(s string) string {
