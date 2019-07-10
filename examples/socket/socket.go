@@ -29,6 +29,9 @@ var probes = []struct {
 	probe tracing.Probe
 	alloc tracing.AllocateFn
 }{
+	// An IPv4 / TCP socket connect attempt:
+	//
+	//  " connect(sock=0xffff9f1ddd216040, 0.0.0.0:0 -> 151.101.66.217:443) "
 	{
 		probe: tracing.Probe{
 			Name:      "tcp4_connect_in",
@@ -40,6 +43,10 @@ var probes = []struct {
 			return new(tcpV4ConnectCall)
 		},
 	},
+
+	// Result of IPv4/TCP connect:
+	//
+	//  " <- connect ok (retval==0 or retval==-ERRNO) "
 	{
 		probe: tracing.Probe{
 			Type:      tracing.TypeKRetProbe,
@@ -52,6 +59,10 @@ var probes = []struct {
 		},
 	},
 
+	// IPv4/TCP socket created. Good for associating socks with pids. Void retval.
+	// Good for client & server socks, but not socks returned by accept().
+	//
+	//  " tcp_v4_init_sock(sock=0xffff9f1ddd216040) "
 	{
 		probe: tracing.Probe{
 			Name:      "tcp_v4_init_sock",
@@ -62,9 +73,13 @@ var probes = []struct {
 			return new(tcpv4InitSock)
 		},
 	},
+
+	// Call to accept (usually blocking).
+	//
+	//  " accept(sock=0xffff9f1ddb3c4040, laddr=0.0.0.0, lport=0) "
 	{
 		probe: tracing.Probe{
-			Name:      "inet_csk_accept_in",
+			Name:      "inet_csk_accept_call",
 			Address:   "inet_csk_accept",
 			Fetchargs: "sock=%di laddr=+{{.INET_SOCK_LADDR}}(%di):u32 lport=+{{.INET_SOCK_LPORT}}(%di):u16",
 		},
@@ -72,10 +87,15 @@ var probes = []struct {
 			return new(tcpAcceptCall)
 		},
 	},
+
+	// Return of accept(). Local side is usually zero so not fetched. Needs
+	// further I/O to populate source.Good for marking a connection as inbound.
+	//
+	//  " <- accept(sock=0xffff9f1ddc5eb780, raddr=10.0.2.15, rport=22) "
 	{
 		probe: tracing.Probe{
 			Type:      tracing.TypeKRetProbe,
-			Name:      "inet_csk_accept_out",
+			Name:      "inet_csk_accept_ret",
 			Address:   "inet_csk_accept",
 			Fetchargs: "sock=%ax raddr=+{{.INET_SOCK_LADDR}}(%ax):u32 rport=+{{.INET_SOCK_LPORT}}(%ax):u16",
 		},
@@ -83,6 +103,10 @@ var probes = []struct {
 			return new(tcpAcceptResult)
 		},
 	},
+
+	// Called each time a TCP (IPv4? IPv6?) socket changes state (TCP_SYN_SENT, TCP_ESTABLISHED, etc).
+	//
+	//  " state(sock=0xffff9f1ddd216040) TCP_SYN_SENT "
 	{
 		probe: tracing.Probe{
 			Name:      "tcp_set_state",
@@ -93,6 +117,12 @@ var probes = []struct {
 			return new(tcpSetStateCall)
 		},
 	},
+
+	// Data is sent via TCP (IPv4, IPv6?).
+	// Good for (payload) data counters and getting full sock src and dest.
+	// Not valid for packet counters, sock behaves as a stream.
+	//
+	//  " tcp_sendmsg(sock=0xffff9f1ddd216040, len=517, 10.0.2.15:55310 -> 151.101.66.217:443) "
 	{
 		// TODO: tcp_sendmsg arguments may not be stable between kernels!
 		//       2.6 has 1st unused arg (stripped?) and struct socket * instead of struct sock *
@@ -108,40 +138,49 @@ var probes = []struct {
 			return new(tcpSendMsgCall)
 		},
 	},
+
+	// IP packet (ipv4 only?) is sent. Acceptable as a packet counter,
+	// But the actual data sent might span multiple packets if TSO is in use.
+	//
+	// (lport is fetched just for the sake of dev mode filtering).
+	//
+	//  " ip_local_out(sock=0xffff9f1ddd216040) "
 	{
-		// This probe is for counting sent IPv4 packets.
-		// If for some reason we want to only count TCP data packets and ignore
-		// ACKs & company, we need to monitor tcp_push or similar.
-		//
-		// Also: This might not account for TSO. A single call to ip_local_out
-		//       could result in multiple packets being sent.
 		probe: tracing.Probe{
 			Name:      "ip_local_out_call",
 			Address:   "ip_local_out",
-			Fetchargs: "sock=%si",
+			Fetchargs: "sock=%si lport=+{{.INET_SOCK_LPORT}}(%si):u16",
+			// TODO: development remove!
+			//       ignoring local 22 port
+			Filter: "lport != 0x1600",
 		},
 		alloc: func() interface{} {
 			return new(ipLocalOutCall)
 		},
 	},
 
+	// Count received IPv4/TCP packets.
+	// TODO: To better align with output side, try to find a fn to count all IP
+	//       packets.
+	//
+	//  " tcp_v4_do_rcv(sock=0xffff9f1ddd216040) "
 	{
-		// This probe is for counting sent IPv4 packets.
-		// If for some reason we want to only count TCP data packets and ignore
-		// ACKs & company, we need to monitor tcp_push or similar.
-		//
-		// Also: This might not account for TSO. A single call to ip_local_out
-		//       could result in multiple packets being sent.
 		probe: tracing.Probe{
 			Name:      "tcp_v4_do_rcv_call",
 			Address:   "tcp_v4_do_rcv",
-			Fetchargs: "sock=%di",
+			Fetchargs: "sock=%di lport=+{{.INET_SOCK_LPORT}}(%di):u16",
+			// TODO: development remove!
+			//       ignoring local 22 port
+			Filter: "lport != 0x1600",
 		},
 		alloc: func() interface{} {
 			return new(tcpV4DoRcv)
 		},
 	},
 
+	// TCP (IPv4 only?) data receive. Good for counting (payload) bytes recv'd.
+	//
+	//  " tcp_recv_established(sock=0xffff9f1ddd216040, size=20, 10.0.2.15:55310 <- 151.101.66.217:443) "
 	{
 		probe: tracing.Probe{
 			Name:      "tcp_rcv_established",
