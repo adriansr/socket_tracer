@@ -19,7 +19,7 @@ import (
 	tracing "github.com/adriansr/socket_tracer"
 )
 
-var constants = map[string]interface{}{
+var templateVars = map[string]interface{}{
 	"AF_INET":     2,
 	"AF_INET6":    10,
 	"IPPROTO_TCP": 6,
@@ -34,44 +34,47 @@ var constants = map[string]interface{}{
 	},
 }
 
-var timeRef TimeReference
+type ProbeDef struct {
+	Probe   tracing.Probe
+	Decoder func(desc tracing.ProbeDescription) (tracing.Decoder, error)
+}
 
-var probes = []struct {
-	probe tracing.Probe
-	alloc tracing.AllocateFn
-}{
+var probes = []ProbeDef{
 
 	/***************************************************************************
 	 * RUNNING PROCESSES
 	 **************************************************************************/
 
 	{
-		probe: tracing.Probe{
+		Probe: tracing.Probe{
 			Name:    "SyS_execve",
 			Address: "SyS_execve",
-			Fetchargs: fmt.Sprintf("path=%s argptrs=%s param0=%s param1=%s param2=%s param3=%s param4=%s param5=%s",
-				makeMemoryDump("%di", 0, maxProgArgLen),                                  // path
-				makeMemoryDump("%si", 0, int((maxProgArgs+1)*unsafe.Sizeof(uintptr(0)))), // argptrs
-				makeMemoryDump("+{{call .POINTER_INDEX 0}}(%si)", 0, maxProgArgLen),      // param0
-				makeMemoryDump("+{{call .POINTER_INDEX 1}}(%si)", 0, maxProgArgLen),      // param1
-				makeMemoryDump("+{{call .POINTER_INDEX 2}}(%si)", 0, maxProgArgLen),      // param2
-				makeMemoryDump("+{{call .POINTER_INDEX 3}}(%si)", 0, maxProgArgLen),      // param3
-				makeMemoryDump("+{{call .POINTER_INDEX 4}}(%si)", 0, maxProgArgLen),      // param4
-				makeMemoryDump("+{{call .POINTER_INDEX 5}}(%si)", 0, maxProgArgLen),      // param5
+			Fetchargs: fmt.Sprintf("path=%s argptrs=%s param0=%s param1=%s param2=%s param3=%s param4=%s",
+				makeMemoryDump("{{.EP1}}", 0, maxProgArgLen),                                  // path
+				makeMemoryDump("{{.EP2}}", 0, int((maxProgArgs+1)*unsafe.Sizeof(uintptr(0)))), // argptrs
+				makeMemoryDump("+{{call .POINTER_INDEX 0}}({{.EP2}})", 0, maxProgArgLen),      // param0
+				makeMemoryDump("+{{call .POINTER_INDEX 1}}({{.EP2}})", 0, maxProgArgLen),      // param1
+				makeMemoryDump("+{{call .POINTER_INDEX 2}}({{.EP2}})", 0, maxProgArgLen),      // param2
+				makeMemoryDump("+{{call .POINTER_INDEX 3}}({{.EP2}})", 0, maxProgArgLen),      // param3
+				makeMemoryDump("+{{call .POINTER_INDEX 4}}({{.EP2}})", 0, maxProgArgLen),      // param4
 			),
 		},
-		alloc: func() interface{} {
-			return new(execveCall)
+		Decoder: func(desc tracing.ProbeDescription) (decoder tracing.Decoder, e error) {
+			return tracing.NewStructDecoder(desc, func() interface{} {
+				return new(execveCall)
+			})
 		},
 	},
 
 	{
-		probe: tracing.Probe{
+		Probe: tracing.Probe{
 			Name:    "do_exit",
 			Address: "do_exit",
 		},
-		alloc: func() interface{} {
-			return new(doExit)
+		Decoder: func(desc tracing.ProbeDescription) (decoder tracing.Decoder, e error) {
+			return tracing.NewStructDecoder(desc, func() interface{} {
+				return new(doExit)
+			})
 		},
 	},
 
@@ -83,14 +86,16 @@ var probes = []struct {
 	//
 	//  " inet_create(sock=0xffff9f1ddadb8080, proto=17) "
 	{
-		probe: tracing.Probe{
+		Probe: tracing.Probe{
 			Name:      "inet_create",
 			Address:   "inet_create",
-			Fetchargs: "sock=%si proto=%dx",
+			Fetchargs: "sock={{.P2}} proto={{.P3}}",
 			Filter:    "proto=={{.IPPROTO_TCP}} || proto=={{.IPPROTO_UDP}}",
 		},
-		alloc: func() interface{} {
-			return new(inetCreateCall)
+		Decoder: func(desc tracing.ProbeDescription) (decoder tracing.Decoder, e error) {
+			return tracing.NewStructDecoder(desc, func() interface{} {
+				return new(inetCreateCall)
+			})
 		},
 	},
 
@@ -99,13 +104,15 @@ var probes = []struct {
 	//
 	//  " inet_create(sock=0xffff9f1ddadb8080, proto=17) "
 	{
-		probe: tracing.Probe{
+		Probe: tracing.Probe{
 			Name:      "inet_sock_destruct",
 			Address:   "inet_sock_destruct",
-			Fetchargs: "sock=%di",
+			Fetchargs: "sock={{.P1}}",
 		},
-		alloc: func() interface{} {
-			return new(inetSockDestruct)
+		Decoder: func(desc tracing.ProbeDescription) (decoder tracing.Decoder, e error) {
+			return tracing.NewStructDecoder(desc, func() interface{} {
+				return new(inetSockDestruct)
+			})
 		},
 	},
 
@@ -117,14 +124,16 @@ var probes = []struct {
 	//
 	//  " connect(sock=0xffff9f1ddd216040, 0.0.0.0:0 -> 151.101.66.217:443) "
 	{
-		probe: tracing.Probe{
+		Probe: tracing.Probe{
 			Name:      "tcp4_connect_in",
 			Address:   "tcp_v4_connect",
-			Fetchargs: "sock=%di laddr=+{{.INET_SOCK_LADDR}}(%di):u32 lport=+{{.INET_SOCK_LPORT}}(%di):u16 af=+{{.SOCKADDR_IN_AF}}(%si):u16 addr=+{{.SOCKADDR_IN_ADDR}}(%si):u32 port=+{{.SOCKADDR_IN_PORT}}(%si):u16",
+			Fetchargs: "sock={{.P1}} laddr=+{{.INET_SOCK_LADDR}}({{.P1}}):u32 lport=+{{.INET_SOCK_LPORT}}({{.P1}}):u16 af=+{{.SOCKADDR_IN_AF}}({{.P2}}):u16 addr=+{{.SOCKADDR_IN_ADDR}}({{.P2}}):u32 port=+{{.SOCKADDR_IN_PORT}}({{.P2}}):u16",
 			Filter:    "af=={{.AF_INET}}",
 		},
-		alloc: func() interface{} {
-			return new(tcpV4ConnectCall)
+		Decoder: func(desc tracing.ProbeDescription) (decoder tracing.Decoder, e error) {
+			return tracing.NewStructDecoder(desc, func() interface{} {
+				return new(tcpV4ConnectCall)
+			})
 		},
 	},
 
@@ -132,14 +141,16 @@ var probes = []struct {
 	//
 	//  " <- connect ok (retval==0 or retval==-ERRNO) "
 	{
-		probe: tracing.Probe{
+		Probe: tracing.Probe{
 			Type:      tracing.TypeKRetProbe,
 			Name:      "tcp4_connect_out",
 			Address:   "tcp_v4_connect",
-			Fetchargs: "retval=%ax",
+			Fetchargs: "retval={{.RET}}",
 		},
-		alloc: func() interface{} {
-			return new(tcpV4ConnectResult)
+		Decoder: func(desc tracing.ProbeDescription) (decoder tracing.Decoder, e error) {
+			return tracing.NewStructDecoder(desc, func() interface{} {
+				return new(tcpV4ConnectResult)
+			})
 		},
 	},
 
@@ -147,13 +158,15 @@ var probes = []struct {
 	//
 	//  " accept(sock=0xffff9f1ddb3c4040, laddr=0.0.0.0, lport=0) "
 	{
-		probe: tracing.Probe{
+		Probe: tracing.Probe{
 			Name:      "inet_csk_accept_call",
 			Address:   "inet_csk_accept",
-			Fetchargs: "sock=%di laddr=+{{.INET_SOCK_LADDR}}(%di):u32 lport=+{{.INET_SOCK_LPORT}}(%di):u16",
+			Fetchargs: "sock={{.P1}} laddr=+{{.INET_SOCK_LADDR}}({{.P1}}):u32 lport=+{{.INET_SOCK_LPORT}}({{.P1}}):u16",
 		},
-		alloc: func() interface{} {
-			return new(tcpAcceptCall)
+		Decoder: func(desc tracing.ProbeDescription) (decoder tracing.Decoder, e error) {
+			return tracing.NewStructDecoder(desc, func() interface{} {
+				return new(tcpAcceptCall)
+			})
 		},
 	},
 
@@ -162,14 +175,16 @@ var probes = []struct {
 	//
 	//  " <- accept(sock=0xffff9f1ddc5eb780, raddr=10.0.2.15, rport=22) "
 	{
-		probe: tracing.Probe{
+		Probe: tracing.Probe{
 			Type:      tracing.TypeKRetProbe,
 			Name:      "inet_csk_accept_ret",
 			Address:   "inet_csk_accept",
-			Fetchargs: "sock=%ax raddr=+{{.INET_SOCK_LADDR}}(%ax):u32 rport=+{{.INET_SOCK_LPORT}}(%ax):u16",
+			Fetchargs: "sock={{.RET}} raddr=+{{.INET_SOCK_LADDR}}({{.RET}}):u32 rport=+{{.INET_SOCK_LPORT}}({{.RET}}):u16",
 		},
-		alloc: func() interface{} {
-			return new(tcpAcceptResult)
+		Decoder: func(desc tracing.ProbeDescription) (decoder tracing.Decoder, e error) {
+			return tracing.NewStructDecoder(desc, func() interface{} {
+				return new(tcpAcceptResult)
+			})
 		},
 	},
 
@@ -177,13 +192,15 @@ var probes = []struct {
 	//
 	//  " state(sock=0xffff9f1ddd216040) TCP_SYN_SENT "
 	{
-		probe: tracing.Probe{
+		Probe: tracing.Probe{
 			Name:      "tcp_set_state",
 			Address:   "tcp_set_state",
-			Fetchargs: "sock=%di state=%si",
+			Fetchargs: "sock={{.P1}} state={{.P2}}",
 		},
-		alloc: func() interface{} {
-			return new(tcpSetStateCall)
+		Decoder: func(desc tracing.ProbeDescription) (decoder tracing.Decoder, e error) {
+			return tracing.NewStructDecoder(desc, func() interface{} {
+				return new(tcpSetStateCall)
+			})
 		},
 	},
 
@@ -195,16 +212,18 @@ var probes = []struct {
 	{
 		// TODO: tcp_sendmsg arguments may not be stable between kernels!
 		//       2.6 has 1st unused arg (stripped?) and struct socket * instead of struct sock *
-		probe: tracing.Probe{
+		Probe: tracing.Probe{
 			Name:      "tcp_sendmsg_in",
 			Address:   "tcp_sendmsg",
-			Fetchargs: "sock=%di size=%dx laddr=+{{.INET_SOCK_LADDR}}(%di):u32 lport=+{{.INET_SOCK_LPORT}}(%di):u16 raddr=+{{.INET_SOCK_RADDR}}(%di):u32 rport=+{{.INET_SOCK_RPORT}}(%di):u16",
+			Fetchargs: "sock={{.TCP_SENDMSG_SOCK}} size={{.TCP_SENDMSG_LEN}} laddr=+{{.INET_SOCK_LADDR}}({{.TCP_SENDMSG_SOCK}}):u32 lport=+{{.INET_SOCK_LPORT}}({{.TCP_SENDMSG_SOCK}}):u16 raddr=+{{.INET_SOCK_RADDR}}({{.TCP_SENDMSG_SOCK}}):u32 rport=+{{.INET_SOCK_RPORT}}({{.TCP_SENDMSG_SOCK}}):u16",
 			// TODO: development remove!
 			//       ignoring local 22 port
 			Filter: "lport!=0x1600",
 		},
-		alloc: func() interface{} {
-			return new(tcpSendMsgCall)
+		Decoder: func(desc tracing.ProbeDescription) (decoder tracing.Decoder, e error) {
+			return tracing.NewStructDecoder(desc, func() interface{} {
+				return new(tcpSendMsgCall)
+			})
 		},
 	},
 
@@ -215,16 +234,18 @@ var probes = []struct {
 	//
 	//  " ip_local_out(sock=0xffff9f1ddd216040) "
 	{
-		probe: tracing.Probe{
+		Probe: tracing.Probe{
 			Name:      "ip_local_out_call",
 			Address:   "ip_local_out",
-			Fetchargs: "sock=%si lport=+{{.INET_SOCK_LPORT}}(%si):u16",
+			Fetchargs: "sock={{.IP_LOCAL_OUT_SOCK}} lport=+{{.INET_SOCK_LPORT}}({{.IP_LOCAL_OUT_SOCK}}):u16",
 			// TODO: development remove!
 			//       ignoring local 22 port
 			Filter: "lport != 0x1600",
 		},
-		alloc: func() interface{} {
-			return new(ipLocalOutCall)
+		Decoder: func(desc tracing.ProbeDescription) (decoder tracing.Decoder, e error) {
+			return tracing.NewStructDecoder(desc, func() interface{} {
+				return new(ipLocalOutCall)
+			})
 		},
 	},
 
@@ -234,33 +255,42 @@ var probes = []struct {
 	//
 	//  " tcp_v4_do_rcv(sock=0xffff9f1ddd216040) "
 	{
-		probe: tracing.Probe{
+		Probe: tracing.Probe{
 			Name:      "tcp_v4_do_rcv_call",
 			Address:   "tcp_v4_do_rcv",
-			Fetchargs: "sock=%di lport=+{{.INET_SOCK_LPORT}}(%di):u16",
+			Fetchargs: "sock={{.P1}} lport=+{{.INET_SOCK_LPORT}}({{.P1}}):u16",
 			// TODO: development remove!
 			//       ignoring local 22 port
 			Filter: "lport != 0x1600",
 		},
-		alloc: func() interface{} {
-			return new(tcpV4DoRcv)
+		Decoder: func(desc tracing.ProbeDescription) (decoder tracing.Decoder, e error) {
+			return tracing.NewStructDecoder(desc, func() interface{} {
+				return new(tcpV4DoRcv)
+			})
 		},
 	},
 
 	// TCP (IPv4 only?) data receive. Good for counting (payload) bytes recv'd.
 	//
 	//  " tcp_recv_established(sock=0xffff9f1ddd216040, size=20, 10.0.2.15:55310 <- 151.101.66.217:443) "
+	//
+	// TODO:
+	// - len argument missing from 4.15
+	// - 3.x outputs a len that is bigger than it's supposed to be, as in includes tcp header?
+	//   but it's not a multiple of 4..
 	{
-		probe: tracing.Probe{
+		Probe: tracing.Probe{
 			Name:      "tcp_rcv_established",
 			Address:   "tcp_rcv_established",
-			Fetchargs: "sock=%di size=%cx laddr=+{{.INET_SOCK_LADDR}}(%di):u32 lport=+{{.INET_SOCK_LPORT}}(%di):u16 raddr=+{{.INET_SOCK_RADDR}}(%di):u32 rport=+{{.INET_SOCK_RPORT}}(%di):u16",
+			Fetchargs: "sock={{.P1}} size={{.P4}} laddr=+{{.INET_SOCK_LADDR}}({{.P1}}):u32 lport=+{{.INET_SOCK_LPORT}}({{.P1}}):u16 raddr=+{{.INET_SOCK_RADDR}}({{.P1}}):u32 rport=+{{.INET_SOCK_RPORT}}({{.P1}}):u16",
 			// TODO: development remove!
 			//       ignoring local 22 port
 			Filter: "lport!=0x1600",
 		},
-		alloc: func() interface{} {
-			return new(tcpRcvEstablished)
+		Decoder: func(desc tracing.ProbeDescription) (decoder tracing.Decoder, e error) {
+			return tracing.NewStructDecoder(desc, func() interface{} {
+				return new(tcpRcvEstablished)
+			})
 		},
 	},
 
@@ -273,23 +303,29 @@ var probes = []struct {
 	   Here and ignore ip_local_out for UDP, it might avoid large-offload issues.
 	*/
 	{
-		probe: tracing.Probe{
+		Probe: tracing.Probe{
 			Name:      "udp_sendmsg_in",
 			Address:   "udp_sendmsg",
-			Fetchargs: "sock=%di size=%dx laddr=+{{.INET_SOCK_LADDR}}(%di):u32 lport=+{{.INET_SOCK_LPORT}}(%di):u16 raddr=+{{.INET_SOCK_RADDR}}(%di):u32 rport=+{{.INET_SOCK_RPORT}}(%di):u16",
+			Fetchargs: "sock={{.UDP_SENDMSG_SOCK}} size={{.UDP_SENDMSG_LEN}} laddr=+{{.INET_SOCK_LADDR}}({{.UDP_SENDMSG_SOCK}}):u32 lport=+{{.INET_SOCK_LPORT}}({{.UDP_SENDMSG_SOCK}}):u16 raddr=+{{.INET_SOCK_RADDR}}({{.UDP_SENDMSG_SOCK}}):u32 rport=+{{.INET_SOCK_RPORT}}({{.UDP_SENDMSG_SOCK}}):u16",
 		},
-		alloc: func() interface{} {
-			return new(udpSendMsgCall)
+		Decoder: func(desc tracing.ProbeDescription) (decoder tracing.Decoder, e error) {
+			return tracing.NewStructDecoder(desc, func() interface{} {
+				return new(udpSendMsgCall)
+			})
 		},
 	},
+}
 
-	// TODO: udp_destroy_sock
-	// TODO: inet_sock_destruct
+func init() {
+	// Register arch-specific variables for interpolation
+	if err := merge(templateVars, archVariables); err != nil {
+		panic(err)
+	}
 }
 
 func interpolate(s string) string {
 	buf := &bytes.Buffer{}
-	if err := template.Must(template.New("").Parse(s)).Execute(buf, constants); err != nil {
+	if err := template.Must(template.New("").Parse(s)).Execute(buf, templateVars); err != nil {
 		panic(err)
 	}
 	return buf.String()
@@ -306,8 +342,7 @@ func merge(dest map[string]interface{}, src map[string]interface{}) error {
 }
 
 func registerProbe(
-	probe tracing.Probe,
-	allocator tracing.AllocateFn,
+	probe ProbeDef,
 	debugFS *tracing.TraceFS,
 	channel *tracing.PerfChannel) error {
 
@@ -317,26 +352,27 @@ func registerProbe(
 	// - Use of string types
 	// - Use of $comm
 
-	probe.Fetchargs = interpolate(probe.Fetchargs)
-	probe.Filter = interpolate(probe.Filter)
+	p := probe.Probe
+	p.Fetchargs = interpolate(p.Fetchargs)
+	p.Filter = interpolate(p.Filter)
 
-	err := debugFS.AddKProbe(probe)
+	err := debugFS.AddKProbe(p)
 	if err != nil {
-		return errors.Wrapf(err, "unable to register probe %s", probe.String())
+		return errors.Wrapf(err, "unable to register probe %s", p.String())
 	}
-	desc, err := debugFS.LoadProbeDescription(probe)
+	desc, err := debugFS.LoadProbeDescription(p)
 	if err != nil {
-		return errors.Wrapf(err, "unable to get format of probe %s", probe.String())
+		return errors.Wrapf(err, "unable to get format of probe %s", p.String())
 	}
-	decoder, err := tracing.NewStructDecoder(desc, allocator)
+	decoder, err := probe.Decoder(desc)
 	if err != nil {
-		return errors.Wrapf(err, "unable to build decoder for probe %s", probe.String())
+		return errors.Wrapf(err, "unable to build decoder for probe %s", p.String())
 	}
 	if err := channel.MonitorProbe(desc, decoder); err != nil {
-		return errors.Wrapf(err, "unable to monitor probe %s", probe.String())
+		return errors.Wrapf(err, "unable to monitor probe %s", p.String())
 	}
 
-	fmt.Fprintf(os.Stderr, "Registered probe:'%s' filter:'%s'\n", probe.String(), probe.Filter)
+	fmt.Fprintf(os.Stderr, "Registered probe:'%s' filter:'%s'\n", p.String(), p.Filter)
 	return nil
 }
 
@@ -350,7 +386,7 @@ func main() {
 	}
 	defer debugFS.RemoveAllKProbes()
 
-	if err := GuessAll(debugFS, constants); err != nil {
+	if err := GuessAll(debugFS, templateVars); err != nil {
 		panic(err)
 	}
 
@@ -366,7 +402,7 @@ func main() {
 	}
 
 	for _, p := range probes {
-		if err := registerProbe(p.probe, p.alloc, debugFS, channel); err != nil {
+		if err := registerProbe(p, debugFS, channel); err != nil {
 			panic(err)
 		}
 	}

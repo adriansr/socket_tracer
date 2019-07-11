@@ -16,6 +16,8 @@ import (
 	tracing "github.com/adriansr/socket_tracer"
 )
 
+var timeRef TimeReference
+
 type event interface {
 	fmt.Stringer
 	Update(*state)
@@ -106,8 +108,11 @@ type inetSockDestruct struct {
 	Sock uintptr          `kprobe:"sock"`
 }
 
+// Fetching data from execve is complicated as support for strings or arrays
+// in Kprobes appear only in recent kernels (~2018). Need to dump fixed-size
+// arrays in 8-byte chunks and the total number of fetchargs is limited.
 const maxProgArgLen = 128
-const maxProgArgs = 6
+const maxProgArgs = 5
 
 type execveCall struct {
 	Meta   tracing.Metadata         `kprobe:"metadata"`
@@ -118,7 +123,6 @@ type execveCall struct {
 	Param2 [maxProgArgLen]byte      `kprobe:"param2,greedy"`
 	Param3 [maxProgArgLen]byte      `kprobe:"param3,greedy"`
 	Param4 [maxProgArgLen]byte      `kprobe:"param4,greedy"`
-	Param5 [maxProgArgLen]byte      `kprobe:"param5,greedy"`
 }
 
 type doExit struct {
@@ -143,7 +147,6 @@ func (e *execveCall) String() string {
 		e.Param2[:],
 		e.Param3[:],
 		e.Param4[:],
-		e.Param5[:],
 	}
 	var list [maxProgArgs]string
 	var argc int
@@ -408,4 +411,18 @@ func kernErrorDesc(retval int) string {
 	default:
 		return fmt.Sprintf("ok (value=%d)", retval)
 	}
+}
+
+type TimeReference struct {
+	timestamp uint64
+	time      time.Time
+}
+
+func (t *TimeReference) ToTime(timestamp uint64) time.Time {
+	if t.timestamp == 0 {
+		t.time = time.Now()
+		t.timestamp = timestamp
+		return t.time
+	}
+	return t.time.Add(time.Duration(timestamp - t.timestamp))
 }

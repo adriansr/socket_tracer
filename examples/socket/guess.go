@@ -22,14 +22,10 @@ type GuessResult map[string]interface{}
 // GuessAction is the representation of a guess to perform.
 type GuessAction struct {
 	// Probe is the probe that is going to be used for the guess.
-	Probe tracing.Probe
+	Probes []ProbeDef
 
 	// Timeout that will be applied to the guess operation.
 	Timeout time.Duration
-
-	// Decoder returns a decoder of your choice. It determines the type of the
-	// event passed to Validate.
-	Decoder func(description tracing.ProbeDescription) (tracing.Decoder, error)
 
 	// Prepare callback performs preparations for the trigger function and
 	// has the opportunity to return an opaque context that will be then
@@ -55,24 +51,39 @@ type GuessAction struct {
 // It terminates once Validate founds a positive record or when the timeout
 // expires.
 func Guess(tfs *tracing.TraceFS, guesser GuessAction) (result GuessResult, err error) {
-	if guesser.Validate == nil || guesser.Trigger == nil || guesser.Decoder == nil {
+	if guesser.Validate == nil || guesser.Trigger == nil {
 		return nil, errors.New("required callback not defined")
 	}
-	probe := guesser.Probe
-	if err := tfs.AddKProbe(probe); err != nil {
-		return nil, errors.Wrapf(err, "failed to add kprobe '%s'", probe.String())
-	}
-	defer tfs.RemoveKProbe(probe)
+	decoders := make([]tracing.Decoder, 0, len(guesser.Probes))
+	formats := make([]tracing.ProbeDescription, 0, len(guesser.Probes))
+	for _, pdesc := range guesser.Probes {
+		if pdesc.Decoder == nil {
+			return nil, errors.New("nil decoder in probedesc")
+		}
+		pdesc.Probe.Fetchargs = interpolate(pdesc.Probe.Fetchargs)
+		pdesc.Probe.Filter = interpolate(pdesc.Probe.Filter)
+		if err := tfs.AddKProbe(pdesc.Probe); err != nil {
+			return nil, errors.Wrapf(err, "failed to add kprobe '%s'", pdesc.Probe.String())
+		}
 
-	descr, err := tfs.LoadProbeDescription(probe)
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to load kprobe '%s' description", probe.String())
+		descr, err := tfs.LoadProbeDescription(pdesc.Probe)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to load kprobe '%s' description", pdesc.Probe.String())
+		}
+
+		decoder, err := pdesc.Decoder(descr)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to create decoder")
+		}
+		decoders = append(decoders, decoder)
+		formats = append(formats, descr)
 	}
 
-	decoder, err := guesser.Decoder(descr)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to create decoder")
-	}
+	defer func() {
+		if err := tfs.RemoveAllKProbes(); err != nil {
+			panic(err)
+		}
+	}()
 
 	timeout := guesser.Timeout
 
@@ -136,10 +147,16 @@ func Guess(tfs *tracing.TraceFS, guesser GuessAction) (result GuessResult, err e
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create perfchannel")
 	}
-	defer perfchan.Close()
+	defer func() {
+		if err := perfchan.Close(); err != nil {
+			panic(err)
+		}
+	}()
 
-	if err := perfchan.MonitorProbe(descr, decoder); err != nil {
-		return nil, errors.Wrap(err, "failed to monitor probe")
+	for i := range guesser.Probes {
+		if err := perfchan.MonitorProbe(formats[i], decoders[i]); err != nil {
+			return nil, errors.Wrap(err, "failed to monitor probe")
+		}
 	}
 
 	if err := perfchan.Run(); err != nil {

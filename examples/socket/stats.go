@@ -106,17 +106,3 @@ func (s *stats) Lost(count uint64) {
 func (s *stats) Output(event string) {
 	s.output <- event
 }
-
-type TimeReference struct {
-	timestamp uint64
-	time      time.Time
-}
-
-func (t *TimeReference) ToTime(timestamp uint64) time.Time {
-	if t.timestamp == 0 {
-		t.time = time.Now()
-		t.timestamp = timestamp
-		return t.time
-	}
-	return t.time.Add(time.Duration(timestamp - t.timestamp))
-}
