@@ -14,9 +14,11 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/pkg/errors"
 	"golang.org/x/sys/unix"
 	"golang.org/x/sys/unix/linux/perf"
+
+	"github.com/joeshaw/multierror"
+	"github.com/pkg/errors"
 )
 
 var (
@@ -129,11 +131,11 @@ func (c *PerfChannel) MonitorProbe(desc ProbeDescription, decoder Decoder) error
 		if err != nil {
 			return err
 		}
-		fd, err := ev.FD()
-		if err != nil {
-			return err
-		}
 		if len(desc.Probe.Filter) > 0 {
+			fd, err := ev.FD()
+			if err != nil {
+				return err
+			}
 			fbytes := []byte(desc.Probe.Filter + "\x00")
 			_, _, errNo := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), unix.PERF_EVENT_IOC_SET_FILTER, uintptr(unsafe.Pointer(&fbytes[0])))
 			if errNo != 0 {
@@ -258,7 +260,16 @@ func (c *PerfChannel) Close() error {
 	defer close(c.sampleC)
 	defer close(c.errC)
 	defer close(c.lostC)
-	return nil
+	var errs multierror.Errors
+	for _, ev := range c.evs {
+		if err := ev.Disable(); err != nil {
+			errs = append(errs, err)
+		}
+		if err := ev.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errs.Err()
 }
 
 // doneWrapperContext is a custom context.Context that is tailored to
@@ -303,9 +314,6 @@ func makeMetadata(eventID int, record *perf.SampleRecord) Metadata {
 
 func (c *PerfChannel) channelLoop(ev *perf.Event) {
 	defer c.wg.Done()
-	defer ev.Close()
-	defer ev.Disable()
-
 	ctx := doneWrapperContext(c.done)
 
 	for {
