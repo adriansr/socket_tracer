@@ -82,36 +82,36 @@ var probes = []ProbeDef{
 	 * IPv4
 	 **************************************************************************/
 
-	// IPv4/TCP/UDP socket created. Good for associating socks with pids.
+	// IPv4/TCP/UDP socket created. Good for associating sockets with pids.
+	// ** This is a struct socket* not a struct sock* **
 	//
-	//  " inet_create(sock=0xffff9f1ddadb8080, proto=17) "
+	//  " inet_create(socket=0xffff9f1ddadb8080, proto=17) "
 	{
 		Probe: tracing.Probe{
-			Name:      "inet_create",
-			Address:   "inet_create",
-			Fetchargs: "sock={{.P2}} proto={{.P3}}",
-			Filter:    "proto=={{.IPPROTO_TCP}} || proto=={{.IPPROTO_UDP}}",
+			Name:      "sock_init_data",
+			Address:   "sock_init_data",
+			Fetchargs: "socket={{.P1}} sock={{.P2}}",
 		},
 		Decoder: func(desc tracing.ProbeDescription) (decoder tracing.Decoder, e error) {
 			return tracing.NewStructDecoder(desc, func() interface{} {
-				return new(inetCreateCall)
+				return new(sockInitData)
 			})
 		},
 	},
 
-	// IPv4 socket destructed. Good for terminating flows.
-	// void return value.
+	// IPv4/TCP/UDP socket released. Good for associating sockets with pids.
+	// ** This is a struct socket* not a struct sock* **
 	//
-	//  " inet_create(sock=0xffff9f1ddadb8080, proto=17) "
+	//  " inet_create(socket=0xffff9f1ddadb8080, proto=17) "
 	{
 		Probe: tracing.Probe{
-			Name:      "inet_sock_destruct",
-			Address:   "inet_sock_destruct",
-			Fetchargs: "sock={{.P1}}",
+			Name:      "inet_release",
+			Address:   "inet_release",
+			Fetchargs: "socket={{.P1}} sock=+{{.SOCKET_SOCK}}({{.P1}})",
 		},
 		Decoder: func(desc tracing.ProbeDescription) (decoder tracing.Decoder, e error) {
 			return tracing.NewStructDecoder(desc, func() interface{} {
-				return new(inetSockDestruct)
+				return new(inetReleaseCall)
 			})
 		},
 	},

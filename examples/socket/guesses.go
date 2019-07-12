@@ -594,6 +594,91 @@ var guesses = []interface{}{
 			unix.Close(cctx.client)
 		},
 	},
+
+	// Guess the offset of (struct socket*)->sk (type struct sock*)
+	// This helps monitor functions that receive a socket* but we care about
+	// sock*.
+	//
+	// 1. Creates a socket, triggering sock_init_data(socket* a, sock* b)
+	// 2. Closes the socket, triggering inet_release(a) where a->sk == b
+	//
+	// Output:
+	//  "SOCKET_SOCK": 32
+	GuessAction{
+		Probes: []ProbeDef{
+			{
+				Probe: tracing.Probe{
+					Name:      "struct_socket_guess",
+					Address:   "sock_init_data",
+					Fetchargs: "socket={{.P1}} sock={{.P2}}",
+				},
+				Decoder: func(desc tracing.ProbeDescription) (decoder tracing.Decoder, e error) {
+					return tracing.NewStructDecoder(desc, func() interface{} {
+						return new(sockInitData)
+					})
+				},
+			},
+
+			{
+				Probe: tracing.Probe{
+					Name:      "struct_socket_guess2",
+					Address:   "inet_release",
+					Fetchargs: makeMemoryDump("{{.P1}}", 0, 128),
+				},
+				Decoder: func(description tracing.ProbeDescription) (decoder tracing.Decoder, e error) {
+					return tracing.NewDumpDecoder(description)
+				},
+			},
+		},
+
+		Timeout: time.Second * 5,
+
+		Prepare: func() (ctx interface{}, err error) {
+			return new(sockInitData), nil
+		},
+
+		Terminate: func(ctx interface{}) {
+		},
+
+		Validate: func(ev interface{}, ctx interface{}) (GuessResult, bool) {
+			cctx := ctx.(*sockInitData)
+			if cctx == nil {
+				return nil, false
+			}
+			if v, ok := ev.(*sockInitData); ok {
+				if cctx.Sock != 0 {
+					return nil, false
+				}
+				*cctx = *v
+				return nil, false
+			}
+
+			dump := ev.([]byte)
+			if cctx.Sock == 0 {
+				return nil, false
+			}
+
+			const ptrLen = int(unsafe.Sizeof(cctx.Sock))
+			sockBuf := (*[ptrLen]byte)(unsafe.Pointer(&cctx.Sock))[:]
+
+			off := indexAligned(dump, sockBuf, 0, ptrLen)
+			if off == -1 {
+				return nil, false
+			}
+
+			return GuessResult{
+				"SOCKET_SOCK": off,
+			}, true
+		},
+
+		Trigger: func(timeout time.Duration, ctx interface{}) {
+			fd, err := unix.Socket(unix.AF_INET, unix.SOCK_STREAM, unix.IPPROTO_TCP)
+			if err != nil {
+				return
+			}
+			unix.Close(fd)
+		},
+	},
 }
 
 func multiGuess(tfs *tracing.TraceFS, guess MultiGuessAction) (result GuessResult, err error) {

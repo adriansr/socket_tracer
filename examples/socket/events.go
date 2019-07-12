@@ -97,15 +97,16 @@ type udpSendMsgCall struct {
 	RPort uint16           `kprobe:"rport"`
 }
 
-type inetCreateCall struct {
-	Meta  tracing.Metadata `kprobe:"metadata"`
-	Sock  uintptr          `kprobe:"sock"`
-	Proto int              `kprobe:"proto"`
+type sockInitData struct {
+	Meta   tracing.Metadata `kprobe:"metadata"`
+	Socket uintptr          `kprobe:"socket"`
+	Sock   uintptr          `kprobe:"sock"`
 }
 
-type inetSockDestruct struct {
-	Meta tracing.Metadata `kprobe:"metadata"`
-	Sock uintptr          `kprobe:"sock"`
+type inetReleaseCall struct {
+	Meta   tracing.Metadata `kprobe:"metadata"`
+	Socket uintptr          `kprobe:"socket"`
+	Sock   uintptr          `kprobe:"sock"`
 }
 
 // Fetching data from execve is complicated as support for strings or arrays
@@ -175,19 +176,19 @@ func (e *doExit) String() string {
 func (e *doExit) Update(*state) {
 	// panic("implement me")
 }
-func (e *inetCreateCall) String() string {
-	return fmt.Sprintf("%s inet_create(sock=0x%x, proto=%d)", header(e.Meta), e.Sock, e.Proto)
+func (e *sockInitData) String() string {
+	return fmt.Sprintf("%s sock_init_data(socket=0x%x, sock=0x%x)", header(e.Meta), e.Socket, e.Sock)
 }
 
-func (e *inetCreateCall) Update(*state) {
+func (e *sockInitData) Update(*state) {
 
 }
 
-func (e *inetSockDestruct) String() string {
-	return fmt.Sprintf("%s inet_sock_destruct(sock=0x%x)", header(e.Meta), e.Sock)
+func (e *inetReleaseCall) String() string {
+	return fmt.Sprintf("%s inet_release(socket=0x%x, sock=0x%x)", header(e.Meta), e.Socket, e.Sock)
 }
 
-func (e *inetSockDestruct) Update(*state) {
+func (e *inetReleaseCall) Update(*state) {
 
 }
 
