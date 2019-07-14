@@ -48,6 +48,12 @@ type udpSendMsgCountGuess struct {
 	Param4 uintptr `kprobe:"d"`
 }
 
+type tcpSendMsgSockGuess struct {
+	Param1   uint32 `kprobe:"p1"`
+	Param2   uint32 `kprobe:"p2"`
+	Indirect uint32 `kprobe:"indirect"`
+}
+
 type tcpClientServerCtx struct {
 	client, server, accepted int
 	written                  int
@@ -133,99 +139,6 @@ var guesses = []interface{}{
 		},
 	},
 
-	// Guess the position of interesting parameters in tcp_sendmsg.
-	// It can have 3 (4.x) or 4 (2.x/3.x) params, with sock and size being
-	// the first and third, or second and fourth.
-	//
-	// Do a send(...) of a certain size and expect either arg3 is the msg length
-	// or arg3 is a pointer and arg4 is the length.
-	//
-	// Output:
-	//  TCP_SENDMSG_SOCK : %dx
-	//  TCP_SENDMSG_LEN  : +4(%sp)
-	GuessAction{
-		Probes: []ProbeDef{
-			{
-				Probe: tracing.Probe{
-					Name:      "tcp_sendmsg_argcount_guess",
-					Address:   "tcp_sendmsg",
-					Fetchargs: "c={{.P3}} d={{.P4}}",
-				},
-				Decoder: func(description tracing.ProbeDescription) (decoder tracing.Decoder, e error) {
-					return tracing.NewStructDecoder(description, func() interface{} {
-						return new(tcpSendMsgArgCountGuess)
-					})
-				},
-			},
-		},
-
-		Timeout: time.Second * 5,
-
-		Prepare: func() (ctx interface{}, err error) {
-			var srvAddr unix.SockaddrInet4
-			cctx := &tcpClientServerCtx{}
-			cctx.server, srvAddr, err = createSocket(unix.SockaddrInet4{})
-			if err != nil {
-				return nil, err
-			}
-			if err = unix.Listen(cctx.server, 1); err != nil {
-				return nil, err
-			}
-			if cctx.client, _, err = createSocket(unix.SockaddrInet4{}); err != nil {
-				return nil, err
-			}
-			if err = unix.Connect(cctx.client, &srvAddr); err != nil {
-				return nil, err
-			}
-			if cctx.accepted, _, err = unix.Accept(cctx.server); err != nil {
-				return nil, err
-			}
-			return cctx, nil
-		},
-
-		Validate: func(ev interface{}, ctx interface{}) (GuessResult, bool) {
-			cctx := ctx.(*tcpClientServerCtx)
-			event := ev.(*tcpSendMsgArgCountGuess)
-			if cctx.written <= 0 {
-				_, _ = fmt.Fprintf(os.Stderr, "ERROR: write failed for guess\n")
-			}
-
-			var sockParam, lenParam string
-			switch {
-			case event.Param3 == uint(cctx.written):
-				// Linux ~4.15
-				sockParam = templateVars["P1"].(string)
-				lenParam = templateVars["P3"].(string)
-
-			case event.Param4 == uint(cctx.written):
-				// Older linux
-				sockParam = templateVars["P2"].(string)
-				lenParam = templateVars["P4"].(string)
-			default:
-				return nil, false
-			}
-			return GuessResult{
-				"TCP_SENDMSG_SOCK": sockParam,
-				"TCP_SENDMSG_LEN":  lenParam,
-			}, true
-		},
-
-		Trigger: func(timeout time.Duration, ctx interface{}) {
-			cctx := ctx.(*tcpClientServerCtx)
-			cctx.written, _ = unix.Write(cctx.client, []byte("Hello World!\n"))
-		},
-
-		Terminate: func(ctx interface{}) {
-			if ctx == nil {
-				return
-			}
-			cctx := ctx.(*tcpClientServerCtx)
-			unix.Close(cctx.accepted)
-			unix.Close(cctx.server)
-			unix.Close(cctx.client)
-		},
-	},
-
 	// Guess the offsets within a struct inet_sock where the local and remote
 	// addresses and ports are found.
 	//
@@ -258,10 +171,6 @@ var guesses = []interface{}{
 			Timeout: time.Second * 5,
 
 			Prepare: func() (ctx interface{}, err error) {
-				randomLocalIP := func() [4]byte {
-					return [4]byte{127, uint8(rand.Intn(256)), uint8(rand.Intn(256)), uint8(1 + rand.Intn(255))}
-				}
-
 				myCtx := inetSockCtx{
 					local: unix.SockaddrInet4{
 						Port: 0,
@@ -402,6 +311,276 @@ var guesses = []interface{}{
 		},
 	},
 
+	// Guess the position of size parameter in tcp_sendmsg.
+	// It can be at position 3 (4.x) or 4 (2.x/3.x).
+	//
+	// Do a send(...) of a certain size and expect either arg3 is the msg length
+	// or arg3 is a pointer and arg4 is the length.
+	//
+	// Output:
+	//  TCP_SENDMSG_LEN  : +4(%sp)
+	GuessAction{
+		Probes: []ProbeDef{
+			{
+				Probe: tracing.Probe{
+					Name:      "tcp_sendmsg_argcount_guess",
+					Address:   "tcp_sendmsg",
+					Fetchargs: "c={{.P3}} d={{.P4}}",
+				},
+				Decoder: func(description tracing.ProbeDescription) (decoder tracing.Decoder, e error) {
+					return tracing.NewStructDecoder(description, func() interface{} {
+						return new(tcpSendMsgArgCountGuess)
+					})
+				},
+			},
+		},
+
+		Timeout: time.Second * 5,
+
+		Prepare: func() (ctx interface{}, err error) {
+			var srvAddr unix.SockaddrInet4
+			cctx := &tcpClientServerCtx{}
+			cctx.server, srvAddr, err = createSocket(unix.SockaddrInet4{})
+			if err != nil {
+				return nil, err
+			}
+			if err = unix.Listen(cctx.server, 1); err != nil {
+				return nil, err
+			}
+			if cctx.client, _, err = createSocket(unix.SockaddrInet4{}); err != nil {
+				return nil, err
+			}
+			if err = unix.Connect(cctx.client, &srvAddr); err != nil {
+				return nil, err
+			}
+			if cctx.accepted, _, err = unix.Accept(cctx.server); err != nil {
+				return nil, err
+			}
+			return cctx, nil
+		},
+
+		Validate: func(ev interface{}, ctx interface{}) (GuessResult, bool) {
+			cctx := ctx.(*tcpClientServerCtx)
+			event := ev.(*tcpSendMsgArgCountGuess)
+			if cctx.written <= 0 {
+				_, _ = fmt.Fprintf(os.Stderr, "ERROR: write failed for guess\n")
+			}
+
+			var lenParam string
+			switch {
+			case event.Param3 == uint(cctx.written):
+				// Linux ~4.15
+				lenParam = templateVars["P3"].(string)
+
+			case event.Param4 == uint(cctx.written):
+				// Older linux
+				lenParam = templateVars["P4"].(string)
+			default:
+				return nil, false
+			}
+			return GuessResult{
+				"TCP_SENDMSG_LEN": lenParam,
+			}, true
+		},
+
+		Trigger: func(timeout time.Duration, ctx interface{}) {
+			cctx := ctx.(*tcpClientServerCtx)
+			cctx.written, _ = unix.Write(cctx.client, []byte("Hello World!\n"))
+		},
+
+		Terminate: func(ctx interface{}) {
+			if ctx == nil {
+				return
+			}
+			cctx := ctx.(*tcpClientServerCtx)
+			unix.Close(cctx.accepted)
+			unix.Close(cctx.server)
+			unix.Close(cctx.client)
+		},
+	},
+
+	// Guess the offset of (struct socket*)->sk (type struct sock*)
+	// This helps monitor functions that receive a socket* but we care about
+	// sock*.
+	//
+	// 1. Creates a socket, triggering sock_init_data(socket* a, sock* b)
+	// 2. Closes the socket, triggering inet_release(a) where a->sk == b
+	//
+	// Output:
+	//  "SOCKET_SOCK": 32
+	GuessAction{
+		Probes: []ProbeDef{
+			{
+				Probe: tracing.Probe{
+					Name:      "struct_socket_guess",
+					Address:   "sock_init_data",
+					Fetchargs: "socket={{.P1}} sock={{.P2}}",
+				},
+				Decoder: func(desc tracing.ProbeDescription) (decoder tracing.Decoder, e error) {
+					return tracing.NewStructDecoder(desc, func() interface{} {
+						return new(sockInitData)
+					})
+				},
+			},
+
+			{
+				Probe: tracing.Probe{
+					Name:      "struct_socket_guess2",
+					Address:   "inet_release",
+					Fetchargs: makeMemoryDump("{{.P1}}", 0, 128),
+				},
+				Decoder: func(description tracing.ProbeDescription) (decoder tracing.Decoder, e error) {
+					return tracing.NewDumpDecoder(description)
+				},
+			},
+		},
+
+		Timeout: time.Second * 5,
+
+		Prepare: func() (ctx interface{}, err error) {
+			return new(sockInitData), nil
+		},
+
+		Terminate: func(ctx interface{}) {
+		},
+
+		Validate: func(ev interface{}, ctx interface{}) (GuessResult, bool) {
+			cctx := ctx.(*sockInitData)
+			if cctx == nil {
+				return nil, false
+			}
+			if v, ok := ev.(*sockInitData); ok {
+				if cctx.Sock != 0 {
+					return nil, false
+				}
+				*cctx = *v
+				return nil, false
+			}
+
+			dump := ev.([]byte)
+			if cctx.Sock == 0 {
+				return nil, false
+			}
+
+			const ptrLen = int(unsafe.Sizeof(cctx.Sock))
+			sockBuf := (*[ptrLen]byte)(unsafe.Pointer(&cctx.Sock))[:]
+
+			off := indexAligned(dump, sockBuf, 0, ptrLen)
+			if off == -1 {
+				return nil, false
+			}
+
+			return GuessResult{
+				"SOCKET_SOCK": off,
+			}, true
+		},
+
+		Trigger: func(timeout time.Duration, ctx interface{}) {
+			fd, err := unix.Socket(unix.AF_INET, unix.SOCK_STREAM, unix.IPPROTO_TCP)
+			if err != nil {
+				return
+			}
+			unix.Close(fd)
+		},
+	},
+
+	// Guess how to get a struct sock* from tcp_sendmsg parameters. It can be:
+	// - param #2 (3.x)
+	// - param #1 (4.x).
+	// - indirect through a struct socket* at param #2 (2.x).
+	//
+	// Do a send(...) to a known address and try to find the destination address
+	// from the sock*
+	//
+	// Output:
+	//  TCP_SENDMSG_SOCK  : %di
+	GuessAction{
+		Probes: []ProbeDef{
+			{
+				Probe: tracing.Probe{
+					Name:      "tcp_sendmsg_sock_guess",
+					Address:   "tcp_sendmsg",
+					Fetchargs: "p1=+{{.INET_SOCK_RADDR}}({{.P1}}):u32 p2=+{{.INET_SOCK_RADDR}}({{.P2}}):u32 indirect=+{{.INET_SOCK_RADDR}}(+{{.SOCKET_SOCK}}({{.P2}})):u32",
+				},
+				Decoder: func(description tracing.ProbeDescription) (decoder tracing.Decoder, e error) {
+					return tracing.NewStructDecoder(description, func() interface{} {
+						return new(tcpSendMsgSockGuess)
+					})
+				},
+			},
+		},
+
+		Timeout: time.Second * 5,
+
+		Prepare: func() (ctx interface{}, err error) {
+			cctx := &tcpClientServerCtx{}
+			cctx.server, cctx.srvAddr, err = createSocket(unix.SockaddrInet4{
+				Addr: randomLocalIP(),
+				Port: 0,
+			})
+			if err != nil {
+				return nil, err
+			}
+			if err = unix.Listen(cctx.server, 1); err != nil {
+				return nil, err
+			}
+			if cctx.client, _, err = createSocket(unix.SockaddrInet4{}); err != nil {
+				return nil, err
+			}
+			if err = unix.Connect(cctx.client, &cctx.srvAddr); err != nil {
+				return nil, err
+			}
+			if cctx.accepted, _, err = unix.Accept(cctx.server); err != nil {
+				return nil, err
+			}
+			return cctx, nil
+		},
+
+		Validate: func(ev interface{}, ctx interface{}) (GuessResult, bool) {
+			cctx := ctx.(*tcpClientServerCtx)
+			event := ev.(*tcpSendMsgSockGuess)
+			if cctx.written <= 0 {
+				_, _ = fmt.Fprintf(os.Stderr, "ERROR: write failed for guess\n")
+				return nil, false
+			}
+			var param string
+			wanted := tracing.MachineEndian.Uint32(cctx.srvAddr.Addr[:])
+			switch {
+
+			case event.Indirect == wanted:
+				param = fmt.Sprintf("+%d(%s)", templateVars["SOCKET_SOCK"], templateVars["P2"])
+
+			case event.Param1 == wanted:
+				// Linux ~4.x
+				param = templateVars["P1"].(string)
+
+			case event.Param2 == wanted:
+				// Linux ~3.x
+				param = templateVars["P2"].(string)
+			default:
+				return nil, false
+			}
+			return GuessResult{
+				"TCP_SENDMSG_SOCK": param,
+			}, true
+		},
+
+		Trigger: func(timeout time.Duration, ctx interface{}) {
+			cctx := ctx.(*tcpClientServerCtx)
+			cctx.written, _ = unix.Write(cctx.client, []byte("Hello World!\n"))
+		},
+
+		Terminate: func(ctx interface{}) {
+			if ctx == nil {
+				return
+			}
+			cctx := ctx.(*tcpClientServerCtx)
+			unix.Close(cctx.accepted)
+			unix.Close(cctx.server)
+			unix.Close(cctx.client)
+		},
+	},
+
 	// Guess how to get a struct sock* from an ip_local_out() call.
 	// This function has two forms depending on kernel version:
 	// - ip_local_out(struct sk_buff *skb) // 2.x/3.x
@@ -420,7 +599,7 @@ var guesses = []interface{}{
 			{
 				Probe: tracing.Probe{
 					Name:    "ip_local_out_sock_guess",
-					Address: "ip_local_out",
+					Address: "{{.IP_LOCAL_OUT}}",
 					Fetchargs: fmt.Sprintf("param2={{.P2}} dump=%s",
 						makeMemoryDump("{{.P1}}", 0, skbuffDumpSize)),
 				},
@@ -594,91 +773,6 @@ var guesses = []interface{}{
 			unix.Close(cctx.client)
 		},
 	},
-
-	// Guess the offset of (struct socket*)->sk (type struct sock*)
-	// This helps monitor functions that receive a socket* but we care about
-	// sock*.
-	//
-	// 1. Creates a socket, triggering sock_init_data(socket* a, sock* b)
-	// 2. Closes the socket, triggering inet_release(a) where a->sk == b
-	//
-	// Output:
-	//  "SOCKET_SOCK": 32
-	GuessAction{
-		Probes: []ProbeDef{
-			{
-				Probe: tracing.Probe{
-					Name:      "struct_socket_guess",
-					Address:   "sock_init_data",
-					Fetchargs: "socket={{.P1}} sock={{.P2}}",
-				},
-				Decoder: func(desc tracing.ProbeDescription) (decoder tracing.Decoder, e error) {
-					return tracing.NewStructDecoder(desc, func() interface{} {
-						return new(sockInitData)
-					})
-				},
-			},
-
-			{
-				Probe: tracing.Probe{
-					Name:      "struct_socket_guess2",
-					Address:   "inet_release",
-					Fetchargs: makeMemoryDump("{{.P1}}", 0, 128),
-				},
-				Decoder: func(description tracing.ProbeDescription) (decoder tracing.Decoder, e error) {
-					return tracing.NewDumpDecoder(description)
-				},
-			},
-		},
-
-		Timeout: time.Second * 5,
-
-		Prepare: func() (ctx interface{}, err error) {
-			return new(sockInitData), nil
-		},
-
-		Terminate: func(ctx interface{}) {
-		},
-
-		Validate: func(ev interface{}, ctx interface{}) (GuessResult, bool) {
-			cctx := ctx.(*sockInitData)
-			if cctx == nil {
-				return nil, false
-			}
-			if v, ok := ev.(*sockInitData); ok {
-				if cctx.Sock != 0 {
-					return nil, false
-				}
-				*cctx = *v
-				return nil, false
-			}
-
-			dump := ev.([]byte)
-			if cctx.Sock == 0 {
-				return nil, false
-			}
-
-			const ptrLen = int(unsafe.Sizeof(cctx.Sock))
-			sockBuf := (*[ptrLen]byte)(unsafe.Pointer(&cctx.Sock))[:]
-
-			off := indexAligned(dump, sockBuf, 0, ptrLen)
-			if off == -1 {
-				return nil, false
-			}
-
-			return GuessResult{
-				"SOCKET_SOCK": off,
-			}, true
-		},
-
-		Trigger: func(timeout time.Duration, ctx interface{}) {
-			fd, err := unix.Socket(unix.AF_INET, unix.SOCK_STREAM, unix.IPPROTO_TCP)
-			if err != nil {
-				return
-			}
-			unix.Close(fd)
-		},
-	},
 }
 
 func multiGuess(tfs *tracing.TraceFS, guess MultiGuessAction) (result GuessResult, err error) {
@@ -812,4 +906,8 @@ func indexAligned(buf []byte, needle []byte, start, align int) int {
 		}
 	}
 	return -1
+}
+
+func randomLocalIP() [4]byte {
+	return [4]byte{127, uint8(rand.Intn(256)), uint8(rand.Intn(256)), uint8(1 + rand.Intn(255))}
 }

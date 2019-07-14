@@ -5,11 +5,9 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"os/signal"
-	"text/template"
 	"time"
 	"unsafe"
 
@@ -19,7 +17,7 @@ import (
 	tracing "github.com/adriansr/socket_tracer"
 )
 
-var templateVars = map[string]interface{}{
+var templateVars = GuessResult{
 	"AF_INET":     2,
 	"AF_INET6":    10,
 	"IPPROTO_TCP": 6,
@@ -47,8 +45,8 @@ var probes = []ProbeDef{
 
 	{
 		Probe: tracing.Probe{
-			Name:    "SyS_execve",
-			Address: "SyS_execve",
+			Name:    "sys_execve",
+			Address: "{{.SYS_EXECVE}}",
 			Fetchargs: fmt.Sprintf("path=%s argptrs=%s param0=%s param1=%s param2=%s param3=%s param4=%s",
 				makeMemoryDump("{{.EP1}}", 0, maxProgArgLen),                                  // path
 				makeMemoryDump("{{.EP2}}", 0, int((maxProgArgs+1)*unsafe.Sizeof(uintptr(0)))), // argptrs
@@ -236,7 +234,7 @@ var probes = []ProbeDef{
 	{
 		Probe: tracing.Probe{
 			Name:      "ip_local_out_call",
-			Address:   "ip_local_out",
+			Address:   "{{.IP_LOCAL_OUT}}",
 			Fetchargs: "sock={{.IP_LOCAL_OUT_SOCK}} lport=+{{.INET_SOCK_LPORT}}({{.IP_LOCAL_OUT_SOCK}}):u16",
 			// TODO: development remove!
 			//       ignoring local 22 port
@@ -323,24 +321,6 @@ func init() {
 	}
 }
 
-func interpolate(s string) string {
-	buf := &bytes.Buffer{}
-	if err := template.Must(template.New("").Parse(s)).Execute(buf, templateVars); err != nil {
-		panic(err)
-	}
-	return buf.String()
-}
-
-func merge(dest map[string]interface{}, src map[string]interface{}) error {
-	for k, v := range src {
-		if prev, found := dest[k]; found {
-			return fmt.Errorf("attempt to redefine key '%s'. previous value:'%s' new value:'%s'", k, prev, v)
-		}
-		dest[k] = v
-	}
-	return nil
-}
-
 func registerProbe(
 	probe ProbeDef,
 	debugFS *tracing.TraceFS,
@@ -352,9 +332,7 @@ func registerProbe(
 	// - Use of string types
 	// - Use of $comm
 
-	p := probe.Probe
-	p.Fetchargs = interpolate(p.Fetchargs)
-	p.Filter = interpolate(p.Filter)
+	p := templateVars.Apply(probe.Probe)
 
 	err := debugFS.AddKProbe(p)
 	if err != nil {
@@ -385,6 +363,14 @@ func main() {
 		panic(err)
 	}
 	defer debugFS.RemoveAllKProbes()
+
+	altFns, err := ResolveFunctions(debugFS, map[string][]string{
+		"SYS_EXECVE":   {"SyS_execve", "sys_execve"},
+		"IP_LOCAL_OUT": {"ip_local_out", "ip_local_out_sk"},
+	})
+	if err := merge(templateVars, altFns); err != nil {
+		panic(err)
+	}
 
 	if err := GuessAll(debugFS, templateVars); err != nil {
 		panic(err)

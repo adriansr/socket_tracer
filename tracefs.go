@@ -328,3 +328,16 @@ func (dfs *TraceFS) LoadProbeDescription(probe Probe) (desc ProbeDescription, er
 	}
 	return desc, nil
 }
+
+func (dfs *TraceFS) AvailableFilterFunctions() (functions []string, err error) {
+	path := filepath.Join(dfs.basePath, "available_filter_functions")
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		functions = append(functions, scanner.Text())
+	}
+	return functions, nil
+}

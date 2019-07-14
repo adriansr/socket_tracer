@@ -5,9 +5,12 @@
 package main
 
 import (
+	"bytes"
+	"fmt"
 	"runtime"
 	"sync"
 	"syscall"
+	"text/template"
 	"time"
 
 	"github.com/pkg/errors"
@@ -60,8 +63,7 @@ func Guess(tfs *tracing.TraceFS, guesser GuessAction) (result GuessResult, err e
 		if pdesc.Decoder == nil {
 			return nil, errors.New("nil decoder in probedesc")
 		}
-		pdesc.Probe.Fetchargs = interpolate(pdesc.Probe.Fetchargs)
-		pdesc.Probe.Filter = interpolate(pdesc.Probe.Filter)
+		pdesc.Probe = templateVars.Apply(pdesc.Probe)
 		if err := tfs.AddKProbe(pdesc.Probe); err != nil {
 			return nil, errors.Wrapf(err, "failed to add kprobe '%s'", pdesc.Probe.String())
 		}
@@ -200,4 +202,51 @@ func Guess(tfs *tracing.TraceFS, guesser GuessAction) (result GuessResult, err e
 			return nil, errors.Wrap(err, "event loss in perf channel")
 		}
 	}
+}
+
+func ResolveFunctions(tfs *tracing.TraceFS, alternatives map[string][]string) (result GuessResult, err error) {
+	fnList, err := tfs.AvailableFilterFunctions()
+	functions := make(map[string]struct{}, len(fnList))
+	result = make(GuessResult, len(alternatives))
+	for _, fn := range fnList {
+		functions[fn] = struct{}{}
+	}
+	for key, options := range alternatives {
+		found := false
+		for _, fn := range options {
+			if _, found = functions[fn]; found {
+				result[key] = fn
+				break
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("no function for %s found in %v", key, options)
+		}
+	}
+	return result, nil
+}
+
+func (g GuessResult) interpolate(s string) string {
+	buf := &bytes.Buffer{}
+	if err := template.Must(template.New("").Parse(s)).Execute(buf, g); err != nil {
+		panic(err)
+	}
+	return buf.String()
+}
+
+func merge(dest map[string]interface{}, src map[string]interface{}) error {
+	for k, v := range src {
+		if prev, found := dest[k]; found {
+			return fmt.Errorf("attempt to redefine key '%s'. previous value:'%s' new value:'%s'", k, prev, v)
+		}
+		dest[k] = v
+	}
+	return nil
+}
+
+func (g GuessResult) Apply(p tracing.Probe) tracing.Probe {
+	p.Address = g.interpolate(p.Address)
+	p.Fetchargs = g.interpolate(p.Fetchargs)
+	p.Filter = g.interpolate(p.Filter)
+	return p
 }
