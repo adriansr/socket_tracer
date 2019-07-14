@@ -223,6 +223,7 @@ func (dfs *TraceFS) LoadProbeDescription(probe Probe) (desc ProbeDescription, er
 	if err != nil {
 		return desc, err
 	}
+	defer file.Close()
 	desc.Probe = probe
 	desc.Fields = make(map[string]Field)
 	scanner := bufio.NewScanner(file)
