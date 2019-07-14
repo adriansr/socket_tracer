@@ -362,7 +362,11 @@ func main() {
 	if err := debugFS.RemoveAllKProbes(); err != nil {
 		panic(err)
 	}
-	defer debugFS.RemoveAllKProbes()
+	defer func() {
+		if err = debugFS.RemoveAllKProbes(); err != nil {
+			panic(err)
+		}
+	}()
 
 	altFns, err := ResolveFunctions(debugFS, map[string][]string{
 		"SYS_EXECVE":   {"SyS_execve", "sys_execve"},
@@ -376,6 +380,11 @@ func main() {
 		panic(err)
 	}
 
+	fmt.Fprintf(os.Stderr, "Resolved %d variables:\n", len(templateVars))
+	for k, v := range templateVars {
+		fmt.Fprintf(os.Stderr, "   %s=%+v\n", k, v)
+	}
+
 	channel, err := tracing.NewPerfChannel(
 		tracing.WithBufferSize(4096),
 		tracing.WithErrBufferSize(1),
@@ -386,6 +395,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	defer channel.Close()
 
 	for _, p := range probes {
 		if err := registerProbe(p, debugFS, channel); err != nil {
