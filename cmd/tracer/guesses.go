@@ -7,6 +7,7 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"math/rand"
 	"net"
@@ -61,7 +62,10 @@ type tcpClientServerCtx struct {
 	extra                    uintptr
 }
 
-const skbuffDumpSize = 1000
+const (
+	skbuffDumpSize    = 960 // Multiple of 8 please
+	maxSafeUDPPayload = 508
+)
 
 type skbuffSockGuess struct {
 	A2   uintptr              `kprobe:"param2"`
@@ -274,26 +278,11 @@ var guesses = []interface{}{
 				return nil, err
 			}
 
-			getListField := func(key string) ([]int, error) {
-				iface, ok := result[key]
-				if !ok {
-					return nil, fmt.Errorf("field %s not found", key)
-				}
-				list, ok := iface.([]int)
-				if !ok {
-					return nil, fmt.Errorf("field %s is not a list", key)
-				}
-				if len(list) == 0 {
-					return nil, fmt.Errorf("field %s not detected", key)
-				}
-				return list, nil
-			}
-
 			var offs [4]int
 			for idx, key := range []string{
 				"INET_SOCK_LADDR", "INET_SOCK_LPORT",
 				"INET_SOCK_RADDR", "INET_SOCK_RPORT"} {
-				list, err := getListField(key)
+				list, err := getListField(result, key)
 				if err != nil {
 					return nil, err
 				}
@@ -385,7 +374,13 @@ var guesses = []interface{}{
 
 		Trigger: func(timeout time.Duration, ctx interface{}) {
 			cctx := ctx.(*tcpClientServerCtx)
-			cctx.written, _ = unix.Write(cctx.client, []byte("Hello World!\n"))
+			for {
+				cctx.written, _ = unix.Write(cctx.client, []byte("Hello World!\n"))
+				if cctx.written > 0 {
+					break
+				}
+				fmt.Fprintf(os.Stderr, "Write failure: %d\n", cctx.written)
+			}
 		},
 
 		Terminate: func(ctx interface{}) {
@@ -567,7 +562,13 @@ var guesses = []interface{}{
 
 		Trigger: func(timeout time.Duration, ctx interface{}) {
 			cctx := ctx.(*tcpClientServerCtx)
-			cctx.written, _ = unix.Write(cctx.client, []byte("Hello World!\n"))
+			for {
+				cctx.written, _ = unix.Write(cctx.client, []byte("Hello World!\n"))
+				if cctx.written > 0 {
+					break
+				}
+				fmt.Fprintf(os.Stderr, "Write failure: %d\n", cctx.written)
+			}
 		},
 
 		Terminate: func(ctx interface{}) {
@@ -593,7 +594,8 @@ var guesses = []interface{}{
 	// found at some point in the dumped first param.
 	//
 	// Output:
-	//  IP_LOCAL_OUT_SOCK : +16(%ax)
+	//  IP_LOCAL_OUT_SOCK    : +16(%ax)
+	//  IP_LOCAL_OUT_SK_BUFF : %ax
 	GuessAction{
 		Probes: []ProbeDef{
 			{
@@ -661,7 +663,8 @@ var guesses = []interface{}{
 				if v.A2 == cctx.extra {
 					return GuessResult{
 						// Second argument to ip_local_out is the struct sock*
-						"IP_LOCAL_OUT_SOCK": templateVars["P2"],
+						"IP_LOCAL_OUT_SOCK":    templateVars["P2"],
+						"IP_LOCAL_OUT_SK_BUFF": templateVars["P3"],
 					}, true
 				}
 				const ptrLen = unsafe.Sizeof(cctx.extra)
@@ -669,7 +672,8 @@ var guesses = []interface{}{
 				if off != -1 {
 					return GuessResult{
 						// struct sock* is a field of struct pointed to by first argument
-						"IP_LOCAL_OUT_SOCK": fmt.Sprintf("+%d(%s)", off, templateVars["P1"]),
+						"IP_LOCAL_OUT_SOCK":    fmt.Sprintf("+%d(%s)", off, templateVars["P1"]),
+						"IP_LOCAL_OUT_SK_BUFF": templateVars["P1"],
 					}, true
 				}
 
@@ -771,6 +775,150 @@ var guesses = []interface{}{
 			cctx := ctx.(*tcpClientServerCtx)
 			unix.Close(cctx.server)
 			unix.Close(cctx.client)
+		},
+	},
+
+	// TODO: Guess how to get sk_buff->len
+	MultiGuessAction{
+		GuessAction: GuessAction{
+			Probes: []ProbeDef{
+				{
+					Probe: tracing.Probe{
+						Name:      "ip_local_out_len_guess",
+						Address:   "{{.IP_LOCAL_OUT}}",
+						Fetchargs: makeMemoryDump("{{.IP_LOCAL_OUT_SK_BUFF}}", 0, skbuffDumpSize),
+					},
+					Decoder: func(description tracing.ProbeDescription) (decoder tracing.Decoder, e error) {
+						return tracing.NewDumpDecoder(description)
+					},
+				},
+			},
+
+			Timeout: time.Second * 5,
+
+			Prepare: func() (ctx interface{}, err error) {
+				cctx := &tcpClientServerCtx{}
+				cctx.server, cctx.srvAddr, err = createSocket(unix.SockaddrInet4{})
+				if err != nil {
+					return nil, err
+				}
+				if err = unix.Listen(cctx.server, 1); err != nil {
+					return nil, err
+				}
+				if cctx.client, _, err = createSocket(unix.SockaddrInet4{}); err != nil {
+					return nil, err
+				}
+				if err = unix.Connect(cctx.client, &cctx.srvAddr); err != nil {
+					return nil, err
+				}
+				if cctx.accepted, _, err = unix.Accept(cctx.server); err != nil {
+					return nil, err
+				}
+				return cctx, nil
+			},
+
+			Trigger: func(timeout time.Duration, ctx interface{}) {
+				cctx := ctx.(*tcpClientServerCtx)
+				n := 13 + rand.Intn(maxSafeUDPPayload+1-13)
+				buf := make([]byte, n)
+				for i := 0; i < n; i++ {
+					buf[i] = 0xCC
+				}
+				for cctx.written <= 0 {
+					cctx.written, _ = unix.Write(cctx.client, buf)
+					if cctx.written != n {
+						fmt.Fprintf(os.Stderr, "short write %d\n", cctx.written)
+					}
+				}
+				unix.Read(cctx.accepted, buf)
+			},
+
+			Validate: func(ev interface{}, ctx interface{}) (GuessResult, bool) {
+				cctx := ctx.(*tcpClientServerCtx)
+				skbuff := ev.([]byte)
+				fmt.Fprintf(os.Stderr, "Got %d bytes (looking for 0x%x):\n%s\n", len(skbuff), cctx.written, hex.Dump(skbuff))
+				if len(skbuff) != skbuffDumpSize || cctx.written <= 0 {
+					return nil, false
+				}
+				const (
+					uIntSize          = int(unsafe.Sizeof(cctx.written))
+					n                 = skbuffDumpSize / uIntSize
+					maxOverhead       = 128
+					minHeadersSize    = 20 /* min IP*/ + 20 /* min TCP */
+					ipHeaderSizeChunk = 4
+				)
+				target := uint(cctx.written)
+				arr := (*[n]uint)(unsafe.Pointer(&skbuff[0]))[:]
+				var results [maxOverhead][]int
+				for i := 0; i < n; i++ {
+					if val := arr[i]; val >= target && val < target+maxOverhead {
+						excess := val - target
+						results[excess] = append(results[excess], i*uIntSize)
+					}
+				}
+
+				result := make(GuessResult)
+				var overhead []int
+				for i := minHeadersSize; i < maxOverhead; i += ipHeaderSizeChunk {
+					if len(results[i]) > 0 {
+						result[fmt.Sprintf("OFF_%d", i)] = results[i]
+						overhead = append(overhead, i)
+					}
+				}
+				result["HEADER_SIZES"] = overhead
+				return result, true
+			},
+
+			Terminate: func(ctx interface{}) {
+				if ctx == nil {
+					return
+				}
+				cctx := ctx.(*tcpClientServerCtx)
+				unix.Close(cctx.accepted)
+				unix.Close(cctx.server)
+				unix.Close(cctx.client)
+			},
+		},
+		Times: 8,
+
+		Reduce: func(results []GuessResult) (result GuessResult, err error) {
+			clones := make([]GuessResult, 0, len(results))
+			for _, res := range results {
+				val, found := res["HEADER_SIZES"]
+				if !found {
+					return nil, errors.New("not all attempts detected offsets")
+				}
+				m := make(GuessResult, 1)
+				m["HEADER_SIZES"] = val
+				clones = append(clones, m)
+			}
+			if result, err = consolidate(clones); err != nil {
+				return nil, err
+			}
+
+			list, err := getListField(result, "HEADER_SIZES")
+			if err != nil {
+				return nil, err
+			}
+			headerSize := list[0]
+			key := fmt.Sprintf("OFF_%d", headerSize)
+			for idx, m := range clones {
+				delete(m, "HEADER_SIZES")
+				m[key] = results[idx][key]
+			}
+
+			if result, err = consolidate(clones); err != nil {
+				return nil, err
+			}
+			list, err = getListField(result, key)
+			if err != nil {
+				return nil, err
+			}
+
+			return GuessResult{
+				"SK_BUFF_LEN":          list[0],
+				"DETECTED_HEADER_SIZE": headerSize,
+			}, nil
 		},
 	},
 }
@@ -910,4 +1058,19 @@ func indexAligned(buf []byte, needle []byte, start, align int) int {
 
 func randomLocalIP() [4]byte {
 	return [4]byte{127, uint8(rand.Intn(256)), uint8(rand.Intn(256)), uint8(1 + rand.Intn(255))}
+}
+
+func getListField(m GuessResult, key string) ([]int, error) {
+	iface, ok := m[key]
+	if !ok {
+		return nil, fmt.Errorf("field %s not found", key)
+	}
+	list, ok := iface.([]int)
+	if !ok {
+		return nil, fmt.Errorf("field %s is not a list", key)
+	}
+	if len(list) == 0 {
+		return nil, fmt.Errorf("field %s not detected", key)
+	}
+	return list, nil
 }

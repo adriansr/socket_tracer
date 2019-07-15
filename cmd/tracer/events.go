@@ -70,6 +70,7 @@ type tcpSendMsgCall struct {
 type ipLocalOutCall struct {
 	Meta tracing.Metadata `kprobe:"metadata"`
 	Sock uintptr          `kprobe:"sock"`
+	Len  uint             `kprobe:"len"`
 }
 
 type tcpV4DoRcv struct {
@@ -260,9 +261,10 @@ func (e *udpSendMsgCall) Update(*state) {
 
 func (e *ipLocalOutCall) String() string {
 	return fmt.Sprintf(
-		"%s ip_local_out(sock=0x%x)",
+		"%s ip_local_out(sock=0x%x, size=%d)",
 		header(e.Meta),
-		e.Sock)
+		e.Sock,
+		e.Len)
 }
 
 func (e *ipLocalOutCall) Update(*state) {

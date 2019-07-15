@@ -235,7 +235,7 @@ var probes = []ProbeDef{
 		Probe: tracing.Probe{
 			Name:      "ip_local_out_call",
 			Address:   "{{.IP_LOCAL_OUT}}",
-			Fetchargs: "sock={{.IP_LOCAL_OUT_SOCK}} lport=+{{.INET_SOCK_LPORT}}({{.IP_LOCAL_OUT_SOCK}}):u16",
+			Fetchargs: "sock={{.IP_LOCAL_OUT_SOCK}} lport=+{{.INET_SOCK_LPORT}}({{.IP_LOCAL_OUT_SOCK}}):u16 len=+{{.SK_BUFF_LEN}}({{.IP_LOCAL_OUT_SK_BUFF}})",
 			// TODO: development remove!
 			//       ignoring local 22 port
 			Filter: "lport != 0x1600",
