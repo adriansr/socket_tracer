@@ -7,7 +7,6 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
-	"encoding/hex"
 	"fmt"
 	"math/rand"
 	"net"
@@ -778,7 +777,7 @@ var guesses = []interface{}{
 		},
 	},
 
-	// TODO: Guess how to get sk_buff->len
+	// Guess how to get (struct sk_buff*)->len.
 	MultiGuessAction{
 		GuessAction: GuessAction{
 			Probes: []ProbeDef{
@@ -836,7 +835,6 @@ var guesses = []interface{}{
 			Validate: func(ev interface{}, ctx interface{}) (GuessResult, bool) {
 				cctx := ctx.(*tcpClientServerCtx)
 				skbuff := ev.([]byte)
-				fmt.Fprintf(os.Stderr, "Got %d bytes (looking for 0x%x):\n%s\n", len(skbuff), cctx.written, hex.Dump(skbuff))
 				if len(skbuff) != skbuffDumpSize || cctx.written <= 0 {
 					return nil, false
 				}

@@ -45,7 +45,7 @@ var probes = []ProbeDef{
 
 	{
 		Probe: tracing.Probe{
-			Name:    "sys_execve",
+			Name:    "sys_execve_call",
 			Address: "{{.SYS_EXECVE}}",
 			Fetchargs: fmt.Sprintf("path=%s argptrs=%s param0=%s param1=%s param2=%s param3=%s param4=%s",
 				makeMemoryDump("{{.EP1}}", 0, maxProgArgLen),                                  // path
@@ -60,6 +60,20 @@ var probes = []ProbeDef{
 		Decoder: func(desc tracing.ProbeDescription) (decoder tracing.Decoder, e error) {
 			return tracing.NewStructDecoder(desc, func() interface{} {
 				return new(execveCall)
+			})
+		},
+	},
+
+	{
+		Probe: tracing.Probe{
+			Type:      tracing.TypeKRetProbe,
+			Name:      "sys_execve_ret",
+			Address:   "{{.SYS_EXECVE}}",
+			Fetchargs: "retval={{.RET}}",
+		},
+		Decoder: func(desc tracing.ProbeDescription) (decoder tracing.Decoder, e error) {
+			return tracing.NewStructDecoder(desc, func() interface{} {
+				return new(execveRet)
 			})
 		},
 	},
@@ -235,7 +249,7 @@ var probes = []ProbeDef{
 		Probe: tracing.Probe{
 			Name:      "ip_local_out_call",
 			Address:   "{{.IP_LOCAL_OUT}}",
-			Fetchargs: "sock={{.IP_LOCAL_OUT_SOCK}} lport=+{{.INET_SOCK_LPORT}}({{.IP_LOCAL_OUT_SOCK}}):u16 len=+{{.SK_BUFF_LEN}}({{.IP_LOCAL_OUT_SK_BUFF}})",
+			Fetchargs: "sock={{.IP_LOCAL_OUT_SOCK}} lport=+{{.INET_SOCK_LPORT}}({{.IP_LOCAL_OUT_SOCK}}):u16 len=+{{.SK_BUFF_LEN}}({{.IP_LOCAL_OUT_SK_BUFF}}):u32",
 			// TODO: development remove!
 			//       ignoring local 22 port
 			Filter: "lport != 0x1600",
@@ -256,7 +270,7 @@ var probes = []ProbeDef{
 		Probe: tracing.Probe{
 			Name:      "tcp_v4_do_rcv_call",
 			Address:   "tcp_v4_do_rcv",
-			Fetchargs: "sock={{.P1}} lport=+{{.INET_SOCK_LPORT}}({{.P1}}):u16",
+			Fetchargs: "sock={{.P1}} lport=+{{.INET_SOCK_LPORT}}({{.P1}}):u16 len=+{{.SK_BUFF_LEN}}({{.P2}}):u32",
 			// TODO: development remove!
 			//       ignoring local 22 port
 			Filter: "lport != 0x1600",
@@ -280,7 +294,7 @@ var probes = []ProbeDef{
 		Probe: tracing.Probe{
 			Name:      "tcp_rcv_established",
 			Address:   "tcp_rcv_established",
-			Fetchargs: "sock={{.P1}} size={{.P4}} laddr=+{{.INET_SOCK_LADDR}}({{.P1}}):u32 lport=+{{.INET_SOCK_LPORT}}({{.P1}}):u16 raddr=+{{.INET_SOCK_RADDR}}({{.P1}}):u32 rport=+{{.INET_SOCK_RPORT}}({{.P1}}):u16",
+			Fetchargs: "sock={{.P1}} size={{.P4}}:u32 laddr=+{{.INET_SOCK_LADDR}}({{.P1}}):u32 lport=+{{.INET_SOCK_LPORT}}({{.P1}}):u16 raddr=+{{.INET_SOCK_RADDR}}({{.P1}}):u32 rport=+{{.INET_SOCK_RPORT}}({{.P1}}):u16",
 			// TODO: development remove!
 			//       ignoring local 22 port
 			Filter: "lport!=0x1600",
@@ -434,7 +448,7 @@ func main() {
 				panic(fmt.Sprintf("not a stringer type: %T", iface))
 			}
 			output.Output(v.String())
-			v.Update(&st)
+			v.Update(st)
 
 		case err := <-channel.ErrC():
 			_, _ = fmt.Fprintf(os.Stderr, "Err received from channel: %v\n", err)
