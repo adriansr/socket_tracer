@@ -109,6 +109,19 @@ type udpSendMsgCall struct {
 	flow *flow
 }
 
+type udpQueueRcvSkb struct {
+	Meta  tracing.Metadata `kprobe:"metadata"`
+	Sock  uintptr          `kprobe:"sock"`
+	Size  uintptr          `kprobe:"size"`
+	LAddr uint32           `kprobe:"laddr"`
+	LPort uint16           `kprobe:"lport"`
+	RAddr uint32           `kprobe:"raddr"`
+	RPort uint16           `kprobe:"rport"`
+
+	//
+	flow *flow
+}
+
 type sockInitData struct {
 	Meta   tracing.Metadata `kprobe:"metadata"`
 	Socket uintptr          `kprobe:"socket"`
@@ -317,6 +330,55 @@ func (e *tcpSendMsgCall) asFlow() *flow {
 
 func (e *tcpSendMsgCall) Update(s *state) {
 	s.UpdateFlow(e.Meta.PID, e.asFlow())
+}
+
+func (e *udpQueueRcvSkb) asFlow() *flow {
+	if e.flow != nil {
+		return e.flow
+	}
+	var buf [4]byte
+	tracing.MachineEndian.PutUint32(buf[:], e.LAddr)
+	laddr := net.IPv4(buf[0], buf[1], buf[2], buf[3])
+	tracing.MachineEndian.PutUint16(buf[:], e.LPort)
+	lport := binary.BigEndian.Uint16(buf[:])
+	tracing.MachineEndian.PutUint32(buf[:], e.RAddr)
+	raddr := net.IPv4(buf[0], buf[1], buf[2], buf[3])
+	tracing.MachineEndian.PutUint16(buf[:], e.RPort)
+	rport := binary.BigEndian.Uint16(buf[:])
+	e.flow = &flow{
+		sock:     e.Sock,
+		proto:    protoUDP,
+		lastSeen: timeRef.ToTime(e.Meta.Timestamp),
+		src: endpoint{
+			addr: &net.UDPAddr{
+				IP:   laddr,
+				Port: int(lport),
+			},
+		},
+		dst: endpoint{
+			addr: &net.UDPAddr{
+				IP:   raddr,
+				Port: int(rport),
+			},
+		},
+	}
+	return e.flow
+}
+
+func (e *udpQueueRcvSkb) String() string {
+	flow := e.asFlow()
+	return fmt.Sprintf(
+		"%s udp_queue_rcv_skb(sock=0x%x, len=%d, %s -> %s)",
+		header(e.Meta),
+		flow.sock,
+		e.Size,
+		flow.src.addr.String(),
+		flow.dst.addr.String())
+}
+
+func (e *udpQueueRcvSkb) Update(s *state) {
+	s.UpdateFlow(e.Meta.PID, e.asFlow())
+	s.DataIn(e.Sock, e.Meta.PID, 1, uint64(e.Size), timeRef.ToTime(e.Meta.Timestamp))
 }
 
 func (e *udpSendMsgCall) asFlow() *flow {

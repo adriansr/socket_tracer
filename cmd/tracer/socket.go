@@ -326,6 +326,19 @@ var probes = []ProbeDef{
 			})
 		},
 	},
+
+	{
+		Probe: tracing.Probe{
+			Name:      "udp_queue_rcv_skb",
+			Address:   "udp_queue_rcv_skb",
+			Fetchargs: "sock={{.P1}} size=+{{.SK_BUFF_LEN}}({{.P2}}) laddr=+{{.INET_SOCK_LADDR}}({{.P1}}):u32 lport=+{{.INET_SOCK_LPORT}}({{.P1}}):u16 raddr=+{{.INET_SOCK_RADDR}}({{.P1}}):u32 rport=+{{.INET_SOCK_RPORT}}({{.P1}}):u16",
+		},
+		Decoder: func(desc tracing.ProbeDescription) (decoder tracing.Decoder, e error) {
+			return tracing.NewStructDecoder(desc, func() interface{} {
+				return new(udpQueueRcvSkb)
+			})
+		},
+	},
 }
 
 func init() {
