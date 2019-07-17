@@ -94,7 +94,7 @@ var guesses = []interface{}{
 			},
 		},
 
-		Timeout: time.Second * 5,
+		Timeout: time.Second * 10,
 
 		Prepare: func() (ctx interface{}, err error) {
 			return magicAddr, nil
@@ -171,7 +171,7 @@ var guesses = []interface{}{
 				},
 			},
 
-			Timeout: time.Second * 5,
+			Timeout: time.Second * 10,
 
 			Prepare: func() (ctx interface{}, err error) {
 				myCtx := inetSockCtx{
@@ -270,7 +270,7 @@ var guesses = []interface{}{
 			},
 		},
 
-		Times: 8,
+		Times: 4,
 
 		Reduce: func(results []GuessResult) (result GuessResult, err error) {
 			if result, err = consolidate(results); err != nil {
@@ -285,7 +285,7 @@ var guesses = []interface{}{
 				if err != nil {
 					return nil, err
 				}
-				offs[idx] = list[len(list)-1]
+				offs[idx] = list[0]
 			}
 
 			// TODO: clustering
@@ -323,7 +323,7 @@ var guesses = []interface{}{
 			},
 		},
 
-		Timeout: time.Second * 5,
+		Timeout: time.Second * 10,
 
 		Prepare: func() (ctx interface{}, err error) {
 			var srvAddr unix.SockaddrInet4
@@ -429,7 +429,7 @@ var guesses = []interface{}{
 			},
 		},
 
-		Timeout: time.Second * 5,
+		Timeout: time.Second * 10,
 
 		Prepare: func() (ctx interface{}, err error) {
 			return new(sockInitData), nil
@@ -504,7 +504,7 @@ var guesses = []interface{}{
 			},
 		},
 
-		Timeout: time.Second * 5,
+		Timeout: time.Second * 10,
 
 		Prepare: func() (ctx interface{}, err error) {
 			cctx := &tcpClientServerCtx{}
@@ -624,7 +624,7 @@ var guesses = []interface{}{
 			},
 		},
 
-		Timeout: time.Second * 5,
+		Timeout: time.Second * 10,
 
 		Prepare: func() (ctx interface{}, err error) {
 			cctx := &tcpClientServerCtx{}
@@ -724,7 +724,7 @@ var guesses = []interface{}{
 			},
 		},
 
-		Timeout: time.Second * 5,
+		Timeout: time.Second * 10,
 
 		Prepare: func() (ctx interface{}, err error) {
 			cctx := &tcpClientServerCtx{}
@@ -793,7 +793,7 @@ var guesses = []interface{}{
 				},
 			},
 
-			Timeout: time.Second * 5,
+			Timeout: time.Second * 10,
 
 			Prepare: func() (ctx interface{}, err error) {
 				cctx := &tcpClientServerCtx{}
@@ -818,15 +818,13 @@ var guesses = []interface{}{
 
 			Trigger: func(timeout time.Duration, ctx interface{}) {
 				cctx := ctx.(*tcpClientServerCtx)
-				n := 13 + rand.Intn(maxSafeUDPPayload+1-13)
+				const minPayload = 13
+				n := minPayload + rand.Intn(maxSafeUDPPayload+1-minPayload)
 				buf := make([]byte, n)
-				for i := 0; i < n; i++ {
-					buf[i] = 0xCC
-				}
-				for cctx.written <= 0 {
-					cctx.written, _ = unix.Write(cctx.client, buf)
-					if cctx.written != n {
-						fmt.Fprintf(os.Stderr, "short write %d\n", cctx.written)
+				for cctx.written == 0 {
+					var err error
+					cctx.written, err = unix.SendmsgN(cctx.client, buf, nil, nil, 0)
+					if err != nil {
 					}
 				}
 				unix.Read(cctx.accepted, buf)
@@ -863,6 +861,9 @@ var guesses = []interface{}{
 						overhead = append(overhead, i)
 					}
 				}
+				if len(overhead) == 0 {
+					return nil, false
+				}
 				result["HEADER_SIZES"] = overhead
 				return result, true
 			},
@@ -877,7 +878,7 @@ var guesses = []interface{}{
 				unix.Close(cctx.client)
 			},
 		},
-		Times: 8,
+		Times: 4,
 
 		Reduce: func(results []GuessResult) (result GuessResult, err error) {
 			clones := make([]GuessResult, 0, len(results))
@@ -928,7 +929,7 @@ func multiGuess(tfs *tracing.TraceFS, guess MultiGuessAction) (result GuessResul
 		if err != nil {
 			return nil, err
 		}
-		_, _ = fmt.Fprintf(os.Stderr, "Result of %s try %d: %+v\n", guess.Probes[0].Probe.Name, idx, r)
+		_, _ = fmt.Fprintf(os.Stderr, "Result of %s iteration %d: %+v\n", guess.Probes[0].Probe.Name, idx, r)
 		results = append(results, r)
 	}
 	return guess.Reduce(results)
