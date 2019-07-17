@@ -102,6 +102,7 @@ func Guess(tfs *tracing.TraceFS, guesser GuessAction) (result GuessResult, err e
 	var wg sync.WaitGroup
 	var once sync.Once
 	wg.Add(1)
+	defer once.Do(wg.Done)
 
 	// Trigger goroutine.
 	go func() {
@@ -110,8 +111,9 @@ func Guess(tfs *tracing.TraceFS, guesser GuessAction) (result GuessResult, err e
 		defer runtime.UnlockOSThread()
 		defer close(tidChan)
 
-		var sh shared
-		sh.tid = syscall.Gettid()
+		sh := shared{
+			tid: syscall.Gettid(),
+		}
 		if guesser.Prepare != nil {
 			sh.ctx, sh.err = guesser.Prepare()
 		}
@@ -137,8 +139,6 @@ func Guess(tfs *tracing.TraceFS, guesser GuessAction) (result GuessResult, err e
 			guesser.Terminate(ctx.ctx)
 		}()
 	}
-
-	defer once.Do(wg.Done)
 
 	perfchan, err := tracing.NewPerfChannel(
 		tracing.WithBufferSize(8),
@@ -178,6 +178,8 @@ func Guess(tfs *tracing.TraceFS, guesser GuessAction) (result GuessResult, err e
 
 	// Allow the trigger to be fired
 	once.Do(wg.Done)
+	// Wait for trigger to finish firing
+	<-tidChan
 
 	for {
 		select {
