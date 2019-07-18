@@ -35,13 +35,13 @@ type tcpV4ConnectCall struct {
 
 type tcpV4ConnectResult struct {
 	Meta   tracing.Metadata `kprobe:"metadata"`
-	Retval int              `kprobe:"retval"`
+	Retval int32            `kprobe:"retval"`
 }
 
 type tcpSetStateCall struct {
 	Meta  tracing.Metadata `kprobe:"metadata"`
 	Sock  uintptr          `kprobe:"sock"`
-	State int              `kprobe:"state"`
+	State int32            `kprobe:"state"`
 }
 
 type tcpAcceptCall struct {
@@ -156,7 +156,7 @@ type execveCall struct {
 
 type execveRet struct {
 	Meta   tracing.Metadata `kprobe:"metadata"`
-	Retval int              `kprobe:"retval"`
+	Retval int32            `kprobe:"retval"`
 }
 
 type doExit struct {
@@ -529,7 +529,7 @@ func (e *tcpAcceptResult) Update(*state) {
 
 func (e *tcpSetStateCall) String() string {
 	ss := fmt.Sprintf("(unknown:%d)", e.State)
-	if e.State < len(tcpStates) {
+	if int(e.State) < len(tcpStates) {
 		ss = tcpStates[e.State]
 	}
 	return fmt.Sprintf("%s state(sock=0x%x) %s", header(e.Meta), e.Sock, ss)
@@ -601,10 +601,10 @@ func header(meta tracing.Metadata) string {
 		meta.TID)
 }
 
-func kernErrorDesc(retval int) string {
+func kernErrorDesc(retval int32) string {
 	switch {
 	case retval < 0:
-		errno := syscall.Errno(0 - retval)
+		errno := syscall.Errno(uintptr(0 - retval))
 		return fmt.Sprintf("failed errno=%d (%s)", errno, errno.Error())
 	case retval == 0:
 		return "ok"

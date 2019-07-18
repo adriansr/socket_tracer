@@ -69,7 +69,7 @@ var probes = []ProbeDef{
 			Type:      tracing.TypeKRetProbe,
 			Name:      "sys_execve_ret",
 			Address:   "{{.SYS_EXECVE}}",
-			Fetchargs: "retval={{.RET}}",
+			Fetchargs: "retval={{.RET}}:s32",
 		},
 		Decoder: func(desc tracing.ProbeDescription) (decoder tracing.Decoder, e error) {
 			return tracing.NewStructDecoder(desc, func() interface{} {
@@ -157,7 +157,7 @@ var probes = []ProbeDef{
 			Type:      tracing.TypeKRetProbe,
 			Name:      "tcp4_connect_out",
 			Address:   "tcp_v4_connect",
-			Fetchargs: "retval={{.RET}}",
+			Fetchargs: "retval={{.RET}}:s32",
 		},
 		Decoder: func(desc tracing.ProbeDescription) (decoder tracing.Decoder, e error) {
 			return tracing.NewStructDecoder(desc, func() interface{} {
@@ -207,7 +207,7 @@ var probes = []ProbeDef{
 		Probe: tracing.Probe{
 			Name:      "tcp_set_state",
 			Address:   "tcp_set_state",
-			Fetchargs: "sock={{.P1}} state={{.P2}}",
+			Fetchargs: "sock={{.P1}} state={{.P2}}:u32",
 		},
 		Decoder: func(desc tracing.ProbeDescription) (decoder tracing.Decoder, e error) {
 			return tracing.NewStructDecoder(desc, func() interface{} {

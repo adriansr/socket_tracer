@@ -837,14 +837,15 @@ var guesses = []interface{}{
 					return nil, false
 				}
 				const (
-					uIntSize          = int(unsafe.Sizeof(cctx.written))
+					uIntSize          = 4
 					n                 = skbuffDumpSize / uIntSize
 					maxOverhead       = 128
-					minHeadersSize    = 20 /* min IP*/ + 20 /* min TCP */
+					minHeadersSize    = 0 //20 /* min IP*/ + 20 /* min TCP */
 					ipHeaderSizeChunk = 4
 				)
-				target := uint(cctx.written)
-				arr := (*[n]uint)(unsafe.Pointer(&skbuff[0]))[:]
+				//fmt.Fprintf(os.Stderr, "Dump %d bytes for %x:\n%s\n", len(skbuff), cctx.written, hex.Dump(skbuff))
+				target := uint32(cctx.written)
+				arr := (*[n]uint32)(unsafe.Pointer(&skbuff[0]))[:]
 				var results [maxOverhead][]int
 				for i := 0; i < n; i++ {
 					if val := arr[i]; val >= target && val < target+maxOverhead {
@@ -900,6 +901,12 @@ var guesses = []interface{}{
 				return nil, err
 			}
 			headerSize := list[0]
+			if len(list) > 1 && headerSize == 0 {
+				// There's two lengths in the sk_buff, one is the payload length
+				// the other one is payload + headers.
+				// Keep the second as we want to count the whole packet size.
+				headerSize = list[1]
+			}
 			key := fmt.Sprintf("OFF_%d", headerSize)
 			for idx, m := range clones {
 				delete(m, "HEADER_SIZES")

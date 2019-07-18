@@ -7,7 +7,6 @@ package socket_tracer
 import (
 	"context"
 	"fmt"
-	"os"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -142,7 +141,7 @@ func (c *PerfChannel) MonitorProbe(desc ProbeDescription, decoder Decoder) error
 				return errors.Wrapf(errNo, "unable to set filter '%s'", desc.Probe.Filter)
 			}
 		}
-		fmt.Fprintf(os.Stderr, "Registered channel ID: %d probe: %d CPU: %d\n", cid, desc.ID, idx)
+		//fmt.Fprintf(os.Stderr, "Registered channel ID: %d probe: %d CPU: %d\n", cid, desc.ID, idx)
 		c.streams[cid] = stream{probeID: desc.ID, decoder: decoder}
 		c.evs = append(c.evs, ev)
 
