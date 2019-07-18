@@ -395,6 +395,11 @@ func main() {
 		}
 	}()
 
+	fmt.Fprintf(os.Stderr, "Initial variables:\n", len(templateVars))
+	for k, v := range templateVars {
+		fmt.Fprintf(os.Stderr, "   %s=%+v\n", k, v)
+	}
+
 	altFns, err := ResolveFunctions(debugFS, map[string][]string{
 		"SYS_EXECVE":   {"SyS_execve", "sys_execve"},
 		"IP_LOCAL_OUT": {"ip_local_out", "ip_local_out_sk"},

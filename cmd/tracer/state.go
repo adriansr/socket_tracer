@@ -196,7 +196,7 @@ func (s *state) UpdateFlow(pid uint32, flow *flow) {
 			// Error...
 		}
 	}
-	if prev.process.pid == 0 && flow.process.pid != 0 {
+	if prev.process == nil || (prev.process.pid == 0 && flow.process.pid != 0) {
 		prev.process = s.getProcess(pid)
 	}
 	prev.src.addr = flow.src.addr

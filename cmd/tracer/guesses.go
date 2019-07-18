@@ -863,6 +863,7 @@ var guesses = []interface{}{
 					}
 				}
 				if len(overhead) == 0 {
+					//fmt.Fprintf(os.Stderr, "XXX overhead 0\n")
 					return nil, false
 				}
 				result["HEADER_SIZES"] = overhead
